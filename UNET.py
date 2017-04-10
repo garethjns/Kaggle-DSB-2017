@@ -10,32 +10,34 @@ Add train code later
 
 #%% Imports
 import numpy as np
-import pandas as pd
 
 import os
-from glob import glob
 import matplotlib.pyplot as plt
-from skimage.segmentation import clear_border
 
 from keras import backend as K
 import tensorflow as tf
 tf.python.control_flow_ops = tf 
+from keras.models import load_model
+
+
 
 #%% uHelpers
 # Containing prcoessing methods
 
 class uHelpers():
+    @staticmethod
     def dice_coef(y_true, y_pred):
         smooth = 1.
         y_true_f = K.flatten(y_true)
         y_pred_f = K.flatten(y_pred)
         intersection = K.sum(y_true_f * y_pred_f)
         return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-
+    
+    @staticmethod
     def dice_coef_loss(y_true, y_pred):
-        return -dice_coef(y_true, y_pred)
+        return -uHelpers.dice_coef(y_true, y_pred)
         
-        
+    @staticmethod    
     def placeInDims3D(data3D, dims=[256,256]):
     
         sh = data3D.shape
@@ -73,7 +75,7 @@ class uHelpers():
               
         return loaded
         
-    
+    @staticmethod
     def norm(data3D):
         
         ot = data3D.dtype
@@ -88,11 +90,11 @@ class uHelpers():
         data3D /= std
         
         return data3D.astype(ot)
-        
+    @staticmethod    
     def normMM(d):
         return (d-np.min(d)) / (np.max(d)-np.min(d))
     
-        
+    @staticmethod    
     def verifyUNET(fn):
         
         try:
@@ -110,28 +112,30 @@ class uHelpers():
 # Containing training and predicting methods
 
 class UNET(uHelpers):
-    def __init__(self, modPath, dataPath, predPath, params):
+    def __init__(self, modPath, ppPath, predPath, params, dimLim=[256,256]):
         self.modPath = modPath # eg. ['UNETFromTutorial']
-        self.dataPath = dataPath # eg. for predictPPV1 ['PPedSSD']
+        self.ppPath = ppPath # eg. for predictPPV1 ['PPedSSD']
         self.predPath = predPath # ['UNETPredPPV1']
+        self.dimLim = dimLim
         
         self = self.loadMod()
+        
     
     def loadMod(self):
-        self.UNETMod = self.load_model(self.modPath, 
-                  custom_objects={'dice_coef': self.dice_coef, 
-                  'dice_coef_loss' : self.dice_coef_loss})       
+        self.UNETMod = load_model(self.modPath, 
+                  custom_objects={'dice_coef': uHelpers.dice_coef, 
+                  'dice_coef_loss' : uHelpers.dice_coef_loss})       
     
     def train(self):
         pass
     
-    def predictPPV1(self, paths, files, params, dimLim=[256,256]):
+    def predictPPV1(self, files):
         # Load from ['PPedSSD'], save to ['UNETPredPPV1']
         
         #if isinstance(files, pd.DataFrame):
         #    files = set(files['Files'])
     
-        nFiles =len(files)
+        nFiles = len(files)
     
         for f in range(0, nFiles):
             
@@ -139,8 +143,8 @@ class UNET(uHelpers):
             do = True
             print('Loading: ' + fn + ' : ' + str(f+1) + '/' + str(nFiles))
             
-            fnSave = self.predPath+fn[len(self.dataPath)::]
-            if os.path.isfile(fnSave) and not params['forcePred']:   
+            fnSave = self.predPath+fn[len(self.ppPath)::]
+            if os.path.isfile(fnSave) and not self.params['forcePred']:   
                 print('   Already done.')
             # But only skip if ok
                 if not self.verifyUNET(fnSave):
@@ -157,13 +161,14 @@ class UNET(uHelpers):
                 resImage3D[segmented_lungs_fill==0] = -1024
                 
                 # Place and expand
-                placed = self.placeInDims3D(resImage3D, dims=dimLim)
+                placed = self.placeInDims3D(resImage3D, dims=self.dimLim)
                 placed = np.expand_dims(placed, axis=1)
                             
                 # Normalise in the same way as UNET train set
                 placed = self.norm(placed)
                 preds = self.UNETMod.predict(placed, batch_size = 2, verbose=1)
                 
+                print('Saving: ' + fnSave)
                 np.savez_compressed(fnSave, nodPreds=preds.astype(np.float16))
     
                 print('Sum: ' + str(np.sum(preds)))

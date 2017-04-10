@@ -8,6 +8,13 @@ Desktop.ini
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
 
+# MATLAB
+*.mat
+
+# Folders
+Models/
+Backups/
+
 # Windows Installer files
 *.cab
 *.msi

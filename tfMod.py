@@ -24,6 +24,9 @@ from generateFeatures import fHelpers
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import os
+import pandas as pd
+import random as rand
 
 
 #%% Helpers
@@ -31,19 +34,21 @@ import tensorflow as tf
 # from disk
 
 class tfHelpers(fHelpers):
+    @staticmethod
     def normalize(image, MIN_BOUND = -1000.0, MAX_BOUND = 400.0):
         image = (image - MIN_BOUND) / (MAX_BOUND - MIN_BOUND)
         image[image>1] = 1.
         image[image<0] = 0.
         return image.astype(np.float16)
         
-    
+    @staticmethod
     def zero_center(image, PIXEL_MEAN = 0.25):
         image = image - PIXEL_MEAN
         return image.astype(np.float16)
 
     
     # Overload fHelpers.getData with this version from trainV3.
+    @staticmethod
     def getData(data, xyzMin, xyzMax, buffs=[20,20,10], plotOn=False):
     
         # First make sure xyzMax is inside data.shape
@@ -94,7 +99,13 @@ class tfHelpers(fHelpers):
             
             return out, n  
             
-            
+    @staticmethod
+    def get_available_gpus():
+        from tensorflow.python.client import device_lib
+        local_device_protos = device_lib.list_local_devices()
+        return [x.name for x in local_device_protos if x.device_type == 'GPU']
+
+           
 #%% TF Mod
 """ 
 Class handelling the tensorFlow model
@@ -106,26 +117,95 @@ Class handelling the tensorFlow model
 """
 
 class tfMod(tfHelpers):
-    def __init__(self, modPath, dataPath, params):
+    def __init__(self, modPath, dataPath, nodePath, labelPath, cParams, 
+                 nodeMode=1, nMax=50,
+                 num_channels=1, num_labels=2, validProp=0.15, 
+                 processingStage=1, train=1, batch_size=50, num_hidden=560,
+                 patch_size=5, outChans=80):
+        
         self.modPath = modPath
         self.dataPath = dataPath
-        self.params = params
-    
-    def get_available_gpus():
-        from tensorflow.python.client import device_lib
-        local_device_protos = device_lib.list_local_devices()
-        return [x.name for x in local_device_protos if x.device_type == 'GPU']
-    
+        self.labelPath = labelPath
+        
+        # Set model params
+        self.batch_size = batch_size
+        self.nBatch = batch_size
+        self.patch_size = patch_size
+        self.num_hidden = num_hidden
+        self.outChans = outChans
+        self.num_steps = 60000 # training steps
+        
+        # Set data params
+        self.zSize = cParams['zBuff']*2
+        self.ySize = cParams['yBuff']*2 
+        self.xSize = cParams['xBuff']*2
+        self.num_channels = num_channels
+        self.train = train
+        self.nodeMode = nodeMode
+        self.nodePath = nodePath
+        
+        if train==1:
+            # Set up for training
+            if processingStage==1:
+                
+                allFiles, trainFiles, testFiles, _, nTrainFiles, _, labelsCSV = \
+                self.availFilesStage1(self.dataPath, self.labelPath)
+                
+                nLoad = nTrainFiles
+                loadIdx = np.random.choice(range(0,trainFiles.shape[0]), nLoad, 
+                                                 replace=False)
+                splitLoad = round(nLoad*(0-validProp))
+                trainIdx = loadIdx[0:splitLoad]
+                validIdx = loadIdx[splitLoad:nLoad]
+                
+                trainFilesLoad = trainFiles.iloc[trainIdx]                                   
+                trainLabelsLoad = labelsCSV.iloc[trainIdx]
+                cTrain, cTrainLabels = self.loadPPFilesV7(dataPath,
+                                      trainFilesLoad, cParams, trainLabelsLoad, 
+                                      nodeMode=2)
+                
+                validFilesLoad = trainFiles.iloc[validIdx]                                   
+                validLabelsLoad = labelsCSV.iloc[validIdx]
+                cValid, cValidLabels = self.loadPPFilesV7(dataPath,
+                                      validFilesLoad, cParams, validLabelsLoad, 
+                                      nodeMode=2)
+            
+            elif processingStage==2:
+                # TODO:
+                # Add: Retrain on all data
+                # Add: Get test files from new samplesub
+                pass
+            
+            self.allFiles = allFiles
+            self.trainFiles = trainFiles
+            self.nTrainFiles = nTrainFiles
+            self.nLoad = nLoad
+            self.trainFilesLoad = trainFilesLoad
+            self.trainLabelsLoad = trainLabelsLoad
+            self.cTrain = cTrain
+            self.cTrainLabels = cTrainLabels
+            self.validFilesLoad = validFilesLoad
+            self.validLabelsLoad = validLabelsLoad
+            self.cValid = cValid
+            self.cValidLabels = cValidLabels
+            self.nVaid = 200
+        else:
+            # Set up for testing
+            # Load test files, change model placeholders
+            self.nTest = 1216#testFiles.shape[0]
+            
+    @staticmethod
     def accuracy(predictions, labels):
       return (100.0 * np.sum(np.argmax(predictions, 1) == np.argmax(labels, 1))
               / predictions.shape[0])    
-            
-    def availFiles(path):
+   
+    @staticmethod        
+    def availFilesStage1(path, labelPath):
         # Find preprocess files
         availFiles = pd.DataFrame(os.listdir(path))
         nAvailFiles = availFiles.shape[0]
         # Find those that are in the training set
-        labelsCSV = pd.read_csv(paths['labels'])
+        labelsCSV = pd.read_csv(labelPath)
         
         a = np.empty([nAvailFiles,1])
         for r in range(0,nAvailFiles):
@@ -147,7 +227,7 @@ class tfMod(tfHelpers):
                nAvailFiles, nAvailTrain, nAvailTest)    
     
     # Load file, extract candidates, discard rest of file. Return candidates
-    def loadPPFilesV6(path, files, cParams, labels):
+    def loadPPFilesV6(self, path, files, cParams, labels):
         
         if isinstance(files, str):
             files = [files]
@@ -179,7 +259,7 @@ class tfMod(tfHelpers):
     
             
             # Get candidaes
-            smData, n, xyzMin, xyzMax = extractNodes(
+            smData, n, xyzMin, xyzMax = self.extractNodes(
                                 data, buffs=[xBuff,yBuff,zBuff], 
                                 nMax = nMax, plotOn=False)
             
@@ -198,7 +278,7 @@ class tfMod(tfHelpers):
             
     # In this version load mask, then get data from mask or non-mask data 
     # Give paths, so hardcode choices for now
-    def loadPPFilesV7(paths, files, cParams, labels, nodeMode=1):
+    def loadPPFilesV7(self, files):
         
         if isinstance(files, str):
             files = [files]
@@ -209,33 +289,31 @@ class tfMod(tfHelpers):
     
         nFiles = len(files)
         
-        xBuff = cParams['xBuff'] # in each direction (size=*2)
-        yBuff = cParams['yBuff'] # in each direction
-        zBuff = cParams['zBuff'] # in each direction
-        nMax = cParams['nMax']
+        xBuff = self.xBuff # in each direction (size=*2)
+        yBuff = self.yBuff # in each direction
+        zBuff = self.zBuff # in each direction
+        nMax = self.nMax
         
         loaded = np.empty(shape=[0,zBuff*2,yBuff*2,xBuff*2,1])
         newLabels = pd.DataFrame(columns=['id', 'cancer'])  
         
-        
-        path2 = paths['PPedSSD']
-    
-        path1 = paths['PPedV6SSD']
-        path3 = paths['UNETPredPPV1']
+        # Needs updating
+        path2 = self.dataPath # PPV1
+        path1 = self.nodePath # UNET or PPV6 nodes - should correspond with nodeMode
+        path3 = self.nodePath
         
         r = 0     
         for fn in files:
             print('Attempting to load data: ' + path1+fn )    
             
             data2 = np.load(path2+fn)['resImage3D']
-    
-            
-            if nodeMode == 1:
+
+            if self.nodeMode == 1:
                 # Use simple nodes
                 print('Attempting to load nodes: ' + path1+fn)
                 data1 = np.load(path1+fn)['arr_0']
                 
-            elif nodeMode == 2:
+            elif self.nodeMode == 2:
                 print('Attempting to load nodes: ' + path3+fn)
                 # Use UNET nodes
                 data1 = np.load(path3+fn)['nodPreds'].astype(np.float32)
@@ -247,7 +325,7 @@ class tfMod(tfHelpers):
             #                    cParams=cParams, labels=labels.iloc[r,:])
     
             # Get candidaes
-            smData, n, xyzMin, xyzMax = extractNodes2(
+            smData, n, xyzMin, xyzMax = self.extractNodes2(
                                 data1=data1, data2=data2, buffs=[xBuff,yBuff,zBuff], 
                                 nMax = nMax, plotOn=False)
             
@@ -256,15 +334,15 @@ class tfMod(tfHelpers):
                 n = 1
                 
             # Append candidates to output
-            loaded = np.append(loaded, np.expand_dims(smData, axis=4), axis=0)
-            newLabels = newLabels.append([labels.iloc[r,:]]*n)
+            self.loaded = np.append(self.loaded, np.expand_dims(smData, axis=4), axis=0)
+            self.newLabels = newLabels.append([self.labels.iloc[r,:]]*n)
             
             r +=1
             print('Added: ' + fn + ' (' + str(r) + '/' + str(nFiles) + ')')
         
         return loaded, newLabels
         
-        
+    @staticmethod    
     def getNodesAndLabels(data, cParams, labels):
         # Gets nodes and labels in usable formats
         # Expand out extra dim on loaded (to work with 3D conv)
@@ -289,7 +367,7 @@ class tfMod(tfHelpers):
             r+=1
          
             # Get candidaes
-            smData, n, xyzMin, xyzMax = extractNodes(
+            smData, n, xyzMin, xyzMax = tfMod.extractNodes(
                                 d, buffs=[xBuff,yBuff,zBuff], 
                                 nMax = nMax, plotOn=False)
             # Append candidates to output
@@ -305,48 +383,47 @@ class tfMod(tfHelpers):
             
         return loaded, labels
         
-    def buildTrainingNetwork():
+    def buildTrainingNetwork(self):
         # Build network 
+        # Params set to self in init.
         # 2 conv layers, 1 fully connected layer
-        batch_size = 50 # this is n rows expected by placeholder - files produce multiple rows
-        nBatch = batch_size
-        patch_size = 5
+        # this is n rows expected by placeholder - files produce multiple rows
+        # nBatch = batch_size
         # depth = 1
-        num_hidden = 560
-        nTest = 1216#testFiles.shape[0]
-        nTrain = round(nBatch*(1-validProp))
+        # nTest = 1216#testFiles.shape[0]
+        # nTrain = round(nBatch*(1-validProp))
         # nValid = cValid.shape[0]*0.5
-        nValid = 200
-        graph = tf.Graph()
+        # nValid = 200
+        self.graph = tf.Graph()
         
         with graph.as_default():
         
           # Input data.
-          trainSubset = tf.placeholder(tf.float32, shape=(nTrain, 
-                               zSize, ySize, xSize, num_channels), name='PHTrain')
-          trainSubsetLabels = tf.placeholder(tf.float32, shape=(nTrain,2), name='PHTrainLabs')
+          trainSubset = tf.placeholder(tf.float32, shape=(self.nTrain, 
+                               self.zSize, self.ySize, self.xSize, self.num_channels), name='PHTrain')
+          trainSubsetLabels = tf.placeholder(tf.float32, shape=(self.nTrain,2), name='PHTrainLabs')
           
-          validSubset = tf.placeholder(tf.float32, shape=(nValid, 
-                               zSize, ySize, xSize, num_channels), name='PHValid')
-          validSubsetLabels = tf.placeholder(tf.float32, shape=(nValid,2), name='PHValidLabs')
+          validSubset = tf.placeholder(tf.float32, shape=(self.nValid, 
+                               self.zSize, self.ySize, self.xSize, self.num_channels), name='PHValid')
+          validSubsetLabels = tf.placeholder(tf.float32, shape=(self.nValid,2), name='PHValidLabs')
           
-          testDataset = tf.placeholder(tf.float32, shape = (nTest, 
-                                                 zSize, ySize, xSize, num_channels), name='PHTest')
+          testDataset = tf.placeholder(tf.float32, shape = (self.nTest, 
+                                                 self.zSize, self.ySize, self.xSize, self.num_channels), name='PHTest')
           
           # testDataset = tf.Variable(initial_value = [1.0,1.0,1.0,1.0,1.0], validate_shape=False, name='PHTest')
           LR = tf.Variable(1)
           # testDataset = tf.constant(testData)
           
-          outChans = 80
+          outChans = self.outChans
           
           # Variables.
           layer1_weights = tf.Variable(tf.truncated_normal(
-              [patch_size, patch_size, patch_size, num_channels, outChans], stddev=0.1))
+              [self.patch_size, self.patch_size, self.patch_size, self.num_channels, outChans], stddev=0.1))
         
           layer1_biases = tf.Variable(tf.zeros([outChans]))
           
           layer2_weights = tf.Variable(tf.truncated_normal(
-              [patch_size, patch_size, patch_size, outChans, outChans], stddev=0.1))
+              [self.patch_size, self.patch_size, self.patch_size, outChans, outChans], stddev=0.1))
         
           layer2_biases = tf.Variable(tf.constant(1.0, shape=[outChans]))
           
@@ -356,14 +433,15 @@ class tfMod(tfHelpers):
           # layer2b_biases = tf.Variable(tf.constant(1.0, shape=[outChans]))
         
           layer3_weights = tf.Variable(tf.truncated_normal(
-              [xSize // 4 * ySize // 4 * zSize //4 * outChans, num_hidden], stddev=0.1))
+              [self.xSize // 4 * self.ySize // 4 * self.zSize //4 * outChans, 
+               self.num_hidden], stddev=0.1))
         
-          layer3_biases = tf.Variable(tf.constant(1.0, shape=[num_hidden]))
+          layer3_biases = tf.Variable(tf.constant(1.0, shape=[self.num_hidden]))
         
           layer4_weights = tf.Variable(tf.truncated_normal(
-              [num_hidden, num_labels], stddev=0.1))
+              [self.num_hidden, self.num_labels], stddev=0.1))
         
-          layer4_biases = tf.Variable(tf.constant(1.0, shape=[num_labels]))
+          layer4_biases = tf.Variable(tf.constant(1.0, shape=[self.num_labels]))
           
           # Model.
           def model(smData):
@@ -388,29 +466,32 @@ class tfMod(tfHelpers):
             return tf.matmul(hidden, layer4_weights) + layer4_biases
           
           # Training computation.
-          logits = model(trainSubset) 
-          loss = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=trainSubsetLabels, logits=logits))
+          self.logits = model(trainSubset) 
+          self.loss = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(labels=trainSubsetLabels, 
+                                                    logits=self.logits))
           
-          logitsV = model(validSubset)
-          lossV = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=validSubsetLabels, logits=logitsV))
+          self.logitsV = model(validSubset)
+          self.lossV = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(labels=validSubsetLabels, 
+                                                    logits=self.logitsV))
           
           # Optimizer.
-          optimizer = tf.train.GradientDescentOptimizer(LR).minimize(loss)
+          self. optimizer = tf.train.GradientDescentOptimizer(LR).minimize(self.loss)
           
           # Predictions for the training, validation, and test data.
-          train_prediction = tf.nn.softmax(logits)
-          valid_prediction = tf.nn.softmax(logitsV)
+          self.train_prediction = tf.nn.softmax(self.logits)
+          self.valid_prediction = tf.nn.softmax(self.logitsV)
           
-          test_prediction = model(testDataset)
-          test_prediction = tf.nn.softmax(model(testDataset))
+          self.test_prediction = model(testDataset)
+          self.test_prediction = tf.nn.softmax(model(testDataset))
           
           # Add ops to save and restore all the variables.
-          saver = tf.train.Saver()
-    def runTraining():
-        #%% Run training - load all first
-        num_steps = 60000
+          self.saver = tf.train.Saver()
+          
+    def runTraining(self):
+        # Run training - load all first
+        
         initialRate = 0.000001
         initialRate = 0.001
         
@@ -418,99 +499,66 @@ class tfMod(tfHelpers):
         
         rand.seed(123123)
         
-        tsAcc = []
-        vsAcc = []
-        tLoss = []
-        vLoss = []
+        self.tsAcc = []
+        self.vsAcc = []
+        self.tLoss = []
+        self.vLoss = []
         it = -1
-        bestPerf = 0
+        self.bestPerf = 0
         sinceLast = 0
-        with tf.Session(graph=graph, config=tf.ConfigProto(log_device_placement=True)) as session:
-            
-        
+        with tf.Session(graph=self.graph, 
+                config=tf.ConfigProto(log_device_placement=True)) as session:
             
             tf.global_variables_initializer().run()
             print('Initialized')
             #print(session.run(logits))
-            for step in range(num_steps):
+            for step in range(self.num_steps):
                 it+=1       
                
-                learningRate = initialRate/np.exp(it/(num_steps/scalingFactor))        
+                learningRate = initialRate/np.exp(it/(self.num_steps/scalingFactor))        
                 
                 # Get data and labels
                 # allData -> trainLoad -> this batch
                 fIdxTrain = np.random.choice(range(0, cTrain.shape[0]), 
-                                                   round(nBatch*(1-validProp)), 
+                                                   round(self.nBatch*(1-self.validProp)), 
                                           replace=False)
-                fIdxValid = np.random.choice(range(0, cValid.shape[0]), 
-                                                   round(nValid),
+                fIdxValid = np.random.choice(range(0, self.cValid.shape[0]), 
+                                                   round(self.nValid),
                                           replace=False)
         
                 
                 # New: Data set already loaded
-                cTrainSubset = cTrain[fIdxTrain,:,:,:,:]
-                cTrainLabelsSubset = cTrainLabels['cancer'].iloc[fIdxTrain]
-                cValidSubset = cValid[fIdxValid,:,:,:,:]
-                cValidLabelsSubset = cValidLabels['cancer'].iloc[fIdxValid]
-                # cValidSubset = cValid
-                # cValidLabelsSubset = cValidLabels['cancer']
-        
-                # This is inefficient at the moment
-                # Loading and processing more than enough data each step
-                # As unknown how many rows from each file
-                # Then cropping to fit expected nBatch
-                # Would be better to move this processing to before training
-                #
-                # Extract inds from list:
-                # tss = [trainSubsetLoad[i] for i in fIdxTrain]
-                # Process subset
-                # trainSubsetData, trainLabelsSubset = \
-                #             getNodesAndLabels(tss, \
-                #                    cParams=cParams, labels=trainLabelsLoad.iloc[fIdxTrain])
-                # Strip DF info from labels                
-                # trainLabelsSubset = trainLabelsSubset['cancer']
-                #
-                # Extract inds from list:
-                # vss = [validSubsetLoad[i] for i in fIdxValid]
-                # Process subset
-                # validSubsetData, validLabelsSubset = \
-                #             getNodesAndLabels(vss, \
-                #                   cParams=cParams, labels=validLabelsLoad.iloc[fIdxValid])
-                # Strip DF info from labels                
-                # validLabelsSubset = validLabelsSubset['cancer']
-                #
-                #
-                # For now crop to size expected by placeholder
-                # trainLabelsSubset = trainLabelsSubset[0:round(nBatch*(1-validProp))]
-                # trainsubsetData = trainSubsetData[0:round(nBatch*(1-validProp)),:,:,:,:]
-                # validLabelsSubset = validLabelsSubset[0:round(nBatch*validProp)]
-                # validSubsetData = validSubsetData[0:round(nBatch*validProp),:,:,:,:]
+                cTrainSubset = self.cTrain[fIdxTrain,:,:,:,:]
+                cTrainLabelsSubset = self.cTrainLabels['cancer'].iloc[fIdxTrain]
+                cValidSubset = self.cValid[fIdxValid,:,:,:,:]
+                cValidLabelsSubset = self.cValidLabels['cancer'].iloc[fIdxValid]
+
               
-                feed_dict = {trainSubset : cTrainSubset, 
-                             trainSubsetLabels : oneHot(cTrainLabelsSubset,2),
-                             validSubset : cValidSubset, 
-                             validSubsetLabels : oneHot(cValidLabelsSubset,2),
-                             LR : learningRate}
+                feed_dict = {self.trainSubset : cTrainSubset, 
+                             self.trainSubsetLabels : self.oneHot(cTrainLabelsSubset,2),
+                             self. validSubset : cValidSubset, 
+                             self.validSubsetLabels : self.oneHot(cValidLabelsSubset,2),
+                             self.LR : learningRate}
                              # testDataset : testData}
                              
                 _, l, predictions, lv, lp = session.run(
-                [optimizer, loss, train_prediction, lossV, valid_prediction], feed_dict=feed_dict)
+                [self.optimizer, self.loss, self.train_prediction, self.lossV, self.valid_prediction], feed_dict=feed_dict)
                 
                 # if (step % 50 == 0):
                 print('-------------------------------------------------------------')
                 print('LR: ' + str(learningRate))
                 print('Minibatch loss at step %d: %f' % (step, l))
                 
-                tsAcc.append(accuracy(predictions, oneHot(cTrainLabelsSubset)))
-                tLoss.append(l)
-                print("Training accuracy: " + str(tsAcc[it]))
+                self.tsAcc.append(self.accuracy(predictions, self.oneHot(cTrainLabelsSubset)))
+                self.tLoss.append(l)
+                print("Training accuracy: " + str(self.tsAcc[it]))
                 
                 # lv, lp = valid_prediction.eval(feed_dict=feed_dict)
                 
-                vsAcc.append(accuracy(lp,oneHot(cValidLabelsSubset)))
+                self.vsAcc.append(self.accuracy(lp,self.oneHot(cValidLabelsSubset)))
                 vLoss.append(lv)
                 
-                print("Validation accuracy: " + str(vsAcc[it]))
+                print("Validation accuracy: " + str(self.vsAcc[it]))
                 print("Validation loss: " + str(lv))
                 
                 
@@ -518,8 +566,8 @@ class tfMod(tfHelpers):
                 plt.figure(figsize=(12,4))
                 plt.subplot(1,2,1)
                 
-                plt.plot(tsAcc)
-                plt.plot(vsAcc, c='r')
+                plt.plot(self.tsAcc)
+                plt.plot(self.vsAcc, c='r')
                 # plt.title('A tale of 2 subplots')
                 plt.ylabel('Accuracy')
                 plt.xlabel('Step')
@@ -528,34 +576,29 @@ class tfMod(tfHelpers):
                 
                 print('Training loss:')
                 plt.subplot(1,2,2)
-                l1 = plt.plot(tLoss, label='Train')
-                l2 = plt.plot(vLoss, c='r', label='Valid')
+                l1 = plt.plot(self.tLoss, label='Train')
+                l2 = plt.plot(self.vLoss, c='r', label='Valid')
                 plt.legend(labels=['Train', 'Valid'])
                 plt.ylabel('Loss')
                 plt.xlabel('Step')
                 
                 plt.show()
-                
-                #print('Minibatch accuracy: %.1f%%' % accuracy(predictions, batch_labels))
-                #print('Validation accuracy: %.1f%%' % accuracy(
-                #     valid_prediction.eval(), valid_labels))
-                #print('Test accuracy: %.1f%%' % accuracy(test_prediction.eval(), test_labels))
-               
+
                 # Save the variables to disk.
                 # Rolling average of 5 steps
                 sinceLast +=1
                 if step > 5:
                     # Current perf is this step and previous 4
-                    currentPerf = np.mean(vsAcc[it-5:it])
+                    currentPerf = np.mean(self.vsAcc[it-5:it])
                     # If this is better than the bestPerf, update bestPerf and 
                     # checkpoint model
-                    if currentPerf >= bestPerf and sinceLast>10:
+                    if currentPerf >= self.bestPerf and sinceLast>10:
                         sinceLast = 0
-                        bestPerf=currentPerf
+                        self.bestPerf=currentPerf
                         chkFn = "S:\OneDrive\Matlab\DSB2017\Kaggle-DSB2017\\tmp\\model_st" + str(step) + '_' + \
                         str(round(float(currentPerf),3)) + ".ckpt"
         
-                        save_path = saver.save(session, chkFn)
+                        save_path = self.saver.save(session, chkFn)
                         
                         print("Model saved in file: %s" % save_path)          
                

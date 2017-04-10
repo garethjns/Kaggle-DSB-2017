@@ -10,149 +10,170 @@ GF and GF3, both versions included. V3 version renamed _V3.
 
 #%% Imports
 
-from preprocessing import plot_3d, plot3D
+from preprocessing import helpers
+
+import pandas as pd
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import pickle as pic
+import pdb
+
+import scipy.io as scio
+
+from skimage.feature import peak_local_max
+from scipy import signal
+
+
+import scipy.ndimage as ndi
+
+
 
 
 #%% Helpers
-class fHelpers():
+class fHelpers(helpers):
+    @staticmethod
     def availFiles(path): # Used by V1,V3
     # Find preprocess files
-    availFiles = pd.DataFrame(os.listdir(path))
-    nAvailFiles = availFiles.shape[0]
-    # Find those that are in the training set
-    labelsCSV = pd.read_csv(paths['labels'])
-    
-    a = np.empty([nAvailFiles,1])
-    for r in range(0,nAvailFiles):
+        availFiles = pd.DataFrame(os.listdir(path))
+        nAvailFiles = availFiles.shape[0]
+        # Find those that are in the training set
+        labelsCSV = pd.read_csv(paths['labels'])
         
-        fn = availFiles.iloc[r,0][0:-4]
-    
-        a[r,0] = (fn in set(labelsCSV['id']))
+        a = np.empty([nAvailFiles,1])
+        for r in range(0,nAvailFiles):
+            
+            fn = availFiles.iloc[r,0][0:-4]
         
-        #print(fn in set(labelsCSV['id']))
+            a[r,0] = (fn in set(labelsCSV['id']))
+            
+            #print(fn in set(labelsCSV['id']))
+            
+      
+        nAvailTrain = int(sum(a))
+        nAvailTest = int(sum(a==0))
+      
+        availTrain = availFiles[a==1]
+        availTest = availFiles[a==0]
         
-  
-    nAvailTrain = int(sum(a))
-    nAvailTest = int(sum(a==0))
-  
-    availTrain = availFiles[a==1]
-    availTest = availFiles[a==0]
-    
-    return(availFiles, availTrain, availTest, 
-           nAvailFiles, nAvailTrain, nAvailTest)
+        return(availFiles, availTrain, availTest, 
+               nAvailFiles, nAvailTrain, nAvailTest)
            
     
-# This function is stupid
-def getHist(data, bins=80, xLims=[-5000,5000]): # Used by V1, V3
-    
-    out = np.zeros(shape=[16], dtype=np.float16)
-    
-    # Get hist    
-    y,x = np.histogram(data.flatten(),bins)
-    
-    # Limit
-    x=x[1::]    
-    
-    y = y[x>xLims[0]]
-    x = x[x>xLims[0]]
-
-    y = y[x<xLims[1]]
-    x = x[x<xLims[1]]
-    
-    if len(y)<16:
-        mInd = len(y)
-    elif len(y)>=16:
-        mInd=16
-  
-    out[0:mInd] = y[0:mInd]
-
-    return out,x
-    
-# Get the "column" coordinates
-def getXY(data, nMax=999, plotOn=False): # Used by V1, V3
-    # Reduce Z
-    mData = np.mean(data, axis=0)
-    
-    image_max = ndi.maximum_filter(mData, size=20, mode='constant')
-    coordsxy = np.array(peak_local_max(mData, min_distance=10))
-    
-    # Sort by mag
-    mag = mData[coordsxy[:,0],coordsxy[:,1]]
-    
-    if plotOn:
-        plt.plot(mag)
+    # This function is stupid
+    @staticmethod
+    def getHist(data, bins=80, xLims=[-5000,5000]): # Used by V1, V3
         
-    sIdx = np.argsort(mag)
-    # Descending
-    sIdx = sIdx[::-1]
-    # Limit by max requested
-    nKeep = min(len(sIdx), nMax)
-    sIdx = sIdx[0:nKeep]    
-    
-    # Sort coords
-    coordsxy = coordsxy[sIdx,:]
-    
-    # For now, limit to three coords
-    # coordsxy = coordsxy[0:3,0:2]
-    
-    # Plot coords
-    if plotOn:
-        plt.plot(mag[sIdx])
-        plt.show()        
+        out = np.zeros(shape=[16], dtype=np.float16)
         
-        plt.imshow(mData, cmap=plt.cm.gray)
-        plt.scatter(coordsxy[:,1],coordsxy[:,0])
-        plt.show()
+        # Get hist    
+        y,x = np.histogram(data.flatten(),bins)
+        
+        # Limit
+        x=x[1::]    
+        
+        y = y[x>xLims[0]]
+        x = x[x>xLims[0]]
     
-    return coordsxy, mData
+        y = y[x<xLims[1]]
+        x = x[x<xLims[1]]
+        
+        if len(y)<16:
+            mInd = len(y)
+        elif len(y)>=16:
+            mInd=16
+      
+        out[0:mInd] = y[0:mInd]
     
-
-# Plot the columns to search using buffs = [xBuff, yBuff]    
-def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
-    # Plot coords
-    if plotOn:
-        plt.imshow(mData, cmap=plt.cm.gray)
-        plt.scatter(coordsxy[:,1],coordsxy[:,0])
-        plt.show()
-    
-    # Create columns
-    # For now, limit to three coords
-    # coordsxy = coordsxy[0:3,0:2]
-    
-    xBuff = buffs[0] # in each direction
-    yBuff = buffs[1] # in each direction
-    # zBuff = 10 # in each direction - not used here
-    
-    # x appears to be in col 1, y in col 0
-    xMin = coordsxy[:,1]-xBuff 
-    yMin = coordsxy[:,0]-yBuff 
-    xMax = coordsxy[:,1]+xBuff 
-    yMax = coordsxy[:,0]+yBuff 
-    #[xMin, xMax, yMin, yMax]
-    
-    if plotOn:
-        plt.imshow(mData, cmap=plt.cm.gray)
-        for c in range(0,len(xMin)):
+        return out,x
+        
+    # Get the "column" coordinates
+    @staticmethod
+    def getXY(data, nMax=999, plotOn=False): # Used by V1, V3
+        # Reduce Z
+        mData = np.mean(data, axis=0)
+        
+        image_max = ndi.maximum_filter(mData, size=20, mode='constant')
+        coordsxy = np.array(peak_local_max(mData, min_distance=10))
+        
+        # Sort by mag
+        mag = mData[coordsxy[:,0],coordsxy[:,1]]
+        
+        if plotOn:
+            plt.plot(mag)
             
-            pltArr = np.zeros(shape=[5,2])
-            pltArr[0,0] = xMin[c]
-            pltArr[0,1] = yMin[c]
-            pltArr[1,0] = xMax[c]
-            pltArr[1,1] = yMin[c]
-            pltArr[2,0] = xMax[c]
-            pltArr[2,1] = yMax[c]
-            pltArr[3,0] = xMin[c]
-            pltArr[3,1] = yMax[c]  
-            pltArr[4,0] = xMin[c]
-            pltArr[4,1] = yMin[c]  
+        sIdx = np.argsort(mag)
+        # Descending
+        sIdx = sIdx[::-1]
+        # Limit by max requested
+        nKeep = min(len(sIdx), nMax)
+        sIdx = sIdx[0:nKeep]    
         
+        # Sort coords
+        coordsxy = coordsxy[sIdx,:]
         
-            plt.plot(pltArr[:,0], pltArr[:,1])
-        plt.show()
+        # For now, limit to three coords
+        # coordsxy = coordsxy[0:3,0:2]
+        
+        # Plot coords
+        if plotOn:
+            plt.plot(mag[sIdx])
+            plt.show()        
+            
+            plt.imshow(mData, cmap=plt.cm.gray)
+            plt.scatter(coordsxy[:,1],coordsxy[:,0])
+            plt.show()
+        
+        return coordsxy, mData
     
-    return xMin, xMax, yMin, yMax
 
+    # Plot the columns to search using buffs = [xBuff, yBuff]   
+    @staticmethod 
+    def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
+        # Plot coords
+        if plotOn:
+            plt.imshow(mData, cmap=plt.cm.gray)
+            plt.scatter(coordsxy[:,1],coordsxy[:,0])
+            plt.show()
+        
+        # Create columns
+        # For now, limit to three coords
+        # coordsxy = coordsxy[0:3,0:2]
+        
+        xBuff = buffs[0] # in each direction
+        yBuff = buffs[1] # in each direction
+        # zBuff = 10 # in each direction - not used here
+        
+        # x appears to be in col 1, y in col 0
+        xMin = coordsxy[:,1]-xBuff 
+        yMin = coordsxy[:,0]-yBuff 
+        xMax = coordsxy[:,1]+xBuff 
+        yMax = coordsxy[:,0]+yBuff 
+        #[xMin, xMax, yMin, yMax]
+        
+        if plotOn:
+            plt.imshow(mData, cmap=plt.cm.gray)
+            for c in range(0,len(xMin)):
+                
+                pltArr = np.zeros(shape=[5,2])
+                pltArr[0,0] = xMin[c]
+                pltArr[0,1] = yMin[c]
+                pltArr[1,0] = xMax[c]
+                pltArr[1,1] = yMin[c]
+                pltArr[2,0] = xMax[c]
+                pltArr[2,1] = yMax[c]
+                pltArr[3,0] = xMin[c]
+                pltArr[3,1] = yMax[c]  
+                pltArr[4,0] = xMin[c]
+                pltArr[4,1] = yMin[c]  
+            
+            
+                plt.plot(pltArr[:,0], pltArr[:,1])
+            plt.show()
+        
+        return xMin, xMax, yMin, yMax
 
+    @staticmethod
     def getZ(data, xMin, xMax, yMin, yMax, zBuff, plotOn=True):
         # Save the xyz for each z peak found in:
         xyzMin = np.empty(shape=[0,3]) # n x x,y,z
@@ -202,6 +223,7 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
         return xyzMin, xyzMax
     
     # Replaces above, gets data. Now handles empty. Uses plot_3d.
+    @staticmethod
     def getData(data, xyzMin, xyzMax, buffs=[20,20,10], plotOn=False): # Used by V1, V3
         
         # Note buff sized used here must be specified (no data to calculate)
@@ -229,12 +251,12 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
              xyzMin[ni,0]:xyzMax[ni,0]]
                             
             if plotOn:
-                plot_3d(out[ni,:,:,:], 0)
+                fHelpers.plot_3d(out[ni,:,:,:], 0)
                 plt.show()
         
         return out, n    
     
-    
+    @staticmethod
     def getGhost(pData): # Used by V1, V3
     
         # Get average planes    
@@ -260,7 +282,7 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
                 
         return pData
     
-        
+    @staticmethod    
     def placeData(data, rel=False, dims=[100,100,100]): # Used by V1, V3
             """ For each axis
             Either:
@@ -315,22 +337,22 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
     
             return loaded
             
-            
+    @staticmethod        
     def extractNodes(data, buffs=[20,20,10], nMax = 50, plotOn=False): # Used by V1, V3 (?)
     
         # Get coords
        
-        coordsxy, mData = getXY(data, nMax=nMax, plotOn=plotOn) 
+        coordsxy, mData = features.getXY(data, nMax=nMax, plotOn=plotOn) 
         
         # Get cols
-        xMin, xMax, yMin, yMax = getCols(
+        xMin, xMax, yMin, yMax = features.getCols(
                     mData, coordsxy, buffs=[buffs[0],buffs[1]], plotOn=plotOn)
                     
         # Get Z            
-        xyzMin, xyzMax = getZ(data, xMin, xMax, yMin, yMax, buffs[2], plotOn=plotOn)
+        xyzMin, xyzMax = features.getZ(data, xMin, xMax, yMin, yMax, buffs[2], plotOn=plotOn)
         
         # Get data (if possible) as [n, z, y, x]
-        smData, n = getData(
+        smData, n = features.getData(
                             data, xyzMin, xyzMax, 
                             buffs=[buffs[0],buffs[1],buffs[2]], plotOn=False)
                 
@@ -338,18 +360,19 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
         return smData, n, xyzMin, xyzMax
     
         
-    # Input 2 versios of data - first to find, second to get    
+    # Input 2 versios of data - first to find, second to get
+    @staticmethod
     def extractNodes2(data1, data2, buffs=[1,1,1], nMax = 50, plotOn=False): # Used by V1, V3
     
         # Get coords
-        coordsxy, mData = getXY(data1, nMax=nMax, plotOn=plotOn) 
+        coordsxy, mData = features.getXY(data1, nMax=nMax, plotOn=plotOn) 
         
         # Get cols
-        xMin, xMax, yMin, yMax = getCols(
+        xMin, xMax, yMin, yMax = features.getCols(
                 mData, coordsxy, buffs=[buffs[0],buffs[1]], plotOn=plotOn)
                 
         # Get Z            
-        xyzMin, xyzMax = getZ(data1, xMin, xMax, yMin, yMax, buffs[2], plotOn=plotOn)
+        xyzMin, xyzMax = features.getZ(data1, xMin, xMax, yMin, yMax, buffs[2], plotOn=plotOn)
         
         # If there is a difference in size between data 1 and 2, translate data1s
         # coordinates from above in to the size of data2
@@ -370,14 +393,15 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
             xyzMax2 = xyzMax
         
         # Get data (if possible) as [n, z, y, x]
-        smData, n = getData(
+        smData, n = features.getData(
                         data2, xyzMin2, xyzMax2, 
                         buffs=[buffs[0],buffs[1],buffs[2]], plotOn=plotOn)
             
             
         return smData, n, xyzMin, xyzMax    
     
-    # Uses extractNodes1 (ie 1 data input)    
+    # Uses extractNodes1 (ie 1 data input)
+    @staticmethod    
     def addFeatures(data, mask=None, plotOn=False): # Used by V1, V3
            
         if not mask is None:
@@ -386,7 +410,7 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
                  
             
         smData, cN, xyzMin, xyzMax = \
-            extractNodes(data, buffs=[20,20,10], nMax = 100, plotOn=plotOn)
+            fHelpers.extractNodes(data, buffs=[20,20,10], nMax = 100, plotOn=plotOn)
         
         # Prop top half
         xyzMid = (xyzMin[:,2]+xyzMax[:,2])/2
@@ -399,10 +423,35 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
         cStd = np.std(xyzMid)
         
         return cN, cPropTop, cMean, cMedian, cStd 
+        
+    @staticmethod    
+    def addFeatures_V3(data, mask=None, plotOn=False):
+       
+        if not mask is None:
+            # Apply mask
+            data[mask.astype(np.bool)==False] = -2000
+                 
+            
+        smData, cN, xyzMin, xyzMax = \
+            fHelpers.extractNodes(data, buffs=[20,20,10], nMax = 100, plotOn=plotOn)
+        
+        # Prop top half
+        xyzMid = (xyzMin[:,2]+xyzMax[:,2])/2
+        mid = len(data[:,1,1])/2
+        cPropTop = np.sum(xyzMid>mid)/len(xyzMid)
+        cMeanTop = 1-(np.mean(xyzMin[:,2])/xyzMin.shape[0])
+        
+        # mean, median, std, x,y,z locs
+        cMean = np.mean(xyzMid)
+        cMedian = np.median(xyzMid)
+        cStd = np.std(xyzMid)
+        
+        return cN, cPropTop, cMean, cMedian, cStd, cMeanTop
      
     
     # Uses extractNodes2 (ie 2 data input and size of cords corrected if different
-    # - as in trainV3)    
+    # - as in trainV3)
+    @staticmethod    
     def addFeatures2(data1, data2, mask=None, plotOn=False): # Used by V1, V3
            
         if not mask is None:
@@ -411,7 +460,10 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
                  
         # Input 2 versios of data - first to find, second to get     
         smData, cN, xyzMin, xyzMax = \
-            extractNodes2(data1.astype(np.int64), data2.astype(np.int64), buffs=[20,20,10], nMax = 100, plotOn=plotOn)
+            fHelpers.extractNodes2(data1.astype(np.int64), 
+                                   data2.astype(np.int64), 
+                                   buffs=[20,20,10], nMax = 100, 
+                                   plotOn=plotOn)
         
         # Prop top half
         xyzMid = (xyzMin[:,2]+xyzMax[:,2])/2
@@ -423,8 +475,33 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
         cMedian = np.median(xyzMid)
         cStd = np.std(xyzMid)
         
-        return cN, cPropTop, cMean, cMedian, cStd     
+        return cN, cPropTop, cMean, cMedian, cStd
+    
+    @staticmethod    
+    def addFeatures2_V3(data1, data2, mask=None, plotOn=False):
+       
+        if not mask is None:
+            # Apply mask
+            data2[mask.astype(np.bool)==False] = -2000
+                 
+        # Input 2 versios of data - first to find, second to get     
+        smData, cN, xyzMin, xyzMax = \
+            fHelpers.extractNodes2(data1.astype(np.int64), data2.astype(np.int64), buffs=[20,20,10], nMax = 100, plotOn=plotOn)
         
+        # Prop top half
+        xyzMid = (xyzMin[:,2]+xyzMax[:,2])/2
+        mid = len(data1[:,1,1])/2
+        cPropTop = np.sum(xyzMid>mid)/len(xyzMid)
+        cMeanTop = 1-(np.mean(xyzMin[:,2])/xyzMin.shape[0])
+        
+        # mean, median, std, x,y,z locs
+        cMean = np.mean(xyzMid)
+        cMedian = np.median(xyzMid)
+        cStd = np.std(xyzMid)
+        
+        return cN, cPropTop, cMean, cMedian, cStd, cMeanTop    
+    
+    @staticmethod    
     def appendRow(row=pd.DataFrame(), data=[], names=[], ind=0, disp=False): # Used by V1, V3
        
         for d,n in zip(data,names):
@@ -435,6 +512,7 @@ def getCols(mData, coordsxy, buffs=[20,20], plotOn=False): # Used by V1, V3
             row = pd.concat([row, pd.DataFrame({n:d}, index=[0])], axis=1)
     
         return row           
+    
     
 #%% features
 """
@@ -447,15 +525,105 @@ save - save train and test tables
 
 """    
 class features(fHelpers):
-    def __init__(self, paPPV1, paPPV6, params):
+    def __init__(self, paPPV1, paPPV6, nodesPath, labels, name):
         self.PPV1 = paPPV1
         self.PPV6 = paPPV6
-        self.params = params
-        self.trainTable
-        self.testTable
+        self.nodesUNET = nodesPath
+        self.labelsPath = labels
+        self.name = name
+        self.trainTable = []
+        self.testTable = []
 
+    @staticmethod
+    def availFiles(path, labelsPath):
+        # Find preprocess files
+        availFiles = pd.DataFrame(os.listdir(path))
+        nAvailFiles = availFiles.shape[0]
+        # Find those that are in the training set
+        labelsCSV = pd.read_csv(labelsPath)
+        
+        a = np.empty([nAvailFiles,1])
+        for r in range(0,nAvailFiles):
+            
+            fn = availFiles.iloc[r,0][0:-4]
+        
+            a[r,0] = (fn in set(labelsCSV['id']))
+            
+            #print(fn in set(labelsCSV['id']))
+            
+      
+        nAvailTrain = int(sum(a))
+        nAvailTest = int(sum(a==0))
+      
+        availTrain = availFiles[a==1]
+        availTest = availFiles[a==0]
+        
+        return(availFiles, availTrain, availTest, 
+               nAvailFiles, nAvailTrain, nAvailTest)
     
-    def loadAllPP(paths, fn, plotOn=False):    
+    def runV1(self, doTrain=1, doTest=1):
+        # Unet nodes disabled
+        allFiles, trainFiles, testFiles, _, _, _ = \
+        self.availFiles(self.PPV1,self.labelsPath)
+        
+        self.labelsCSV = pd.read_csv(self.labelsPath)        
+        
+        if doTrain:
+            self.trainTable = features.getRows(self.PPV1, self.PPV6, 
+                                               self.nodesUNET, trainFiles, 
+                                               self.labelsCSV)
+            # Save                                    
+            self.save('trainTable'+self.name, self.trainTable)
+
+        if doTest:        
+            testLabelsPH = pd.DataFrame({'cancer': np.zeros(shape=(testFiles.shape[0]))+0.22,
+                                                                   'id':testFiles[0]})
+            
+            testLabelsPH = testLabelsPH[['id', 'cancer']]
+            self.testTable = features.getRows(self.PPV1, self.PPV6, self.nodesUNET,
+                                              testFiles, testLabelsPH, testFlag = True)
+        
+            # Save
+            self.save('testTable'+self.name, self.testTable)       
+
+        
+    def runV3(self, doTrain=1, doTest=1):
+        
+        allFiles, trainFiles, testFiles, _, _, _ = \
+        self.availFiles(self.PPV1,self.labelsPath)
+        
+        self.labelsCSV = pd.read_csv(self.labelsPath)        
+        
+        if doTrain:
+            self.trainTable = features.getRows_V3(self.PPV1, self.PPV6, 
+                                               self.nodesUNET, trainFiles, 
+                                               self.labelsCSV)
+            # Save                                    
+            self.save('trainTable'+self.name, self.trainTable)
+
+        if doTest:        
+            testLabelsPH = pd.DataFrame({'cancer': np.zeros(shape=(testFiles.shape[0]))+0.22,
+                                                                   'id':testFiles[0]})
+            
+            testLabelsPH = testLabelsPH[['id', 'cancer']]
+            self.testTable = features.getRows_V3(self.PPV1, self.PPV6, self.nodesUNET,
+                                              testFiles, testLabelsPH, testFlag = True)
+        
+            # Save
+            self.save('testTable'+self.name, self.testTable)  
+            
+            
+    def save(self, fn, table):
+    
+        dv = {col : table[col].values for col in table.columns.values}    
+        scio.savemat(fn+'.mat', {'struct': dv})
+        
+        f = open(fn+'.p', "wb")    
+        pic.dump(table, f)    
+        f.close()   
+    
+    
+    def loadAllPP(ppV1, ppV6, ppU, fn, plotOn=False):    
         # Load all PPed files available for subject
     
         if isinstance(fn, pd.Series):
@@ -465,14 +633,17 @@ class features(fHelpers):
     
         print('Attempting to load: ' +  str(fn))    
         
-        dataV1 = np.load(paths['PPed']+str(fn))
+        dataV1 = np.load(ppV1+str(fn))
         
         # dataV6 = dataV1['resImage3D']
-        dataV6 = np.load(paths['PPedV6']+fn)['arr_0']
+        dataV6 = np.load(ppV6+fn)['arr_0']
         
-        UNM = np.load(paths['UNETPredPPV1']+str(fn))
-        UNM = UNM['nodPreds']
-       
+        if type(ppU)==str:
+            UNM = np.load(ppU+str(fn))
+            UNM = UNM['nodPreds']
+        else: 
+            UNM = 0
+           
         if plotOn:
             print('   Plotting hist...')
             plt.hist(dataV1['resImage3D'].flatten(), bins=80)
@@ -487,678 +658,726 @@ class features(fHelpers):
             plt.show()
                     
         return dataV1, dataV6, UNM
+    
+    @staticmethod    
+    def getRows(ppV1, ppV6, ppU, files, labelsCSV, testFlag=False, plotOn=False):
+        # UNET Nodes disabled in this version
+        table = pd.DataFrame()
+        nF = len(files)
+        # nF = 3
+        for r in range(0,nF):
         
-        def getRows(paths, files, labelsCSV, testFlag=False, plotOn=False):
-    
-    table = pd.DataFrame()
-    nF = len(files)
-    
-    for r in range(0,nF):
-    
-        print('Appending row: ' + str(r+1) + '/' + str(nF))
-        fn = files.iloc[r,0]
-        
-        # stupid part
-        if testFlag:
-            # id in placeholder labels has .npz
-           nl = labelsCSV.loc[labelsCSV['id']==fn]
-        else:
-            nl = labelsCSV.loc[labelsCSV['id']==fn[0:-4]]
+            print('Appending row: ' + str(r+1) + '/' + str(nF))
+            fn = files.iloc[r,0]
             
-        label = nl.iloc[0][1]
-
-        pData1, pData6, UNM = loadAllPP(paths, fn) 
-        
-        # Prepare dataFrame
-        row = appendRow(data=[fn, label], 
-                        names=['name', 'cancer'])
-        
-        #pData1 contains
-        # resImage3D = pData1['resImage3D']
-        # segmented_lungs = pData1['segmented_lungs']
-        # segmented_lungs_fill = pData1['segmented_lungs_fill']
-        # diff = pData1['diff']
-        # diff2 = pData1['diff2']
-        
-        
-        # Get ghost
-        ghost = getGhost(pData1['resImage3D'])
-        
-        if plotOn:
-            plt.imshow(ghost[100,:,:], cmap=plt.cm.gray)
-            plt.show()
-            plt.imshow(pData1['resImage3D'][100,:,:], cmap=plt.cm.gray)
-            plt.show()
-            gDiff = pData1['resImage3D']-ghost
-            plt.imshow(gDiff[100,:,:], cmap=plt.cm.gray)
-            plt.show()
-
-        # Run get functions
-        
-        # Find candidates V1, mask: pData['segmented_lungs_fill']
-        # Prop top half
-        # mean, median, std, x,y,z locs
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['PD1_SLF_cN', 'PD1_SLF_cPT', 'PD1_SLF_cM', 
-                        'PD1_SLF_cMed', 'PD1_SLF_cStd'], ind=r)
-        
-        # Find candidates V1, mask: pData['diff']
-        data = 'resImage3D'
-        mask = 'diff'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['PD1_Diff_cN', 'PD1_Diff_cPT', 'PD1_Diff_cM', 
-                        'PD1_Diff_cMed', 'PD1_Diff_cStd'], ind=r)
-        
-        # Find candidates V1, mask: pData['diff2']
-        data = 'resImage3D'
-        mask = 'diff2'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['PD1_Diff2_cN', 'PD1_Diff2_cPT', 'PD1_Diff2_cM', 
-                        'PD1_Diff2_cMed', 'PD1_Diff2_cStd'], ind=r)
-        
-        
-        # Find candidates ghost, mask: pData['segmented_lungs']
-        data = 'resImage3D'
-        mask = 'segmented_lungs'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['PD1_SL_cN', 'PD1_SL_cPT', 'PD1_SL_cM', 
-                        'PD1_SL_cMed', 'PD1_SL_cStd'], ind=r)
-        
-        # Find candidates ghost, mask: pData['diff']
-        data = ghost
-        mask = 'diff'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(ghost, pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['gh_Diff_cN', 'gh_Diff_cPT', 'gh_Diff_cM', 
-                        'gh_Diff_cMed', 'gh_Diff_cStd'], ind=r)
-        
-        # Find candidates ghost, mask: pData['diff2']
-        data = ghost
-        mask = 'diff2'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(ghost, pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['gh_Diff2_cN', 'gh_Diff2_cPT', 'gh_Diff2_cM', 
-                        'gh_Diff2_cMed', 'gh_Diff2_cStd'], ind=r)
-        
-        # Get lung volume from segmented_lung_fill?
-        mask = 'segmented_lungs_fill'
-        data = pData1[mask]
-        lv = np.sum(data)
-        row = appendRow(row=row, data=[lv], 
-                        names=['SLF_LV'], ind=r)
-        # Get height/volume ratio
-        thresh = 400
-        data1D = np.sum(data,axis=(1,2))
-        
-        data1D[data1D<thresh]=0
-        data1D[data1D>=thresh]=1
-        vhr = lv/np.sum(data1D)
-        
-        row = appendRow(row=row, data=[vhr], 
-                        names=['VHR'], ind=r)        
-        
-        # Get histogram around 0 V1, mask: segmented_lungs
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        y,x = getHist(data[mask.astype(np.bool)], bins=50, xLims=[-400,400])
-        # plt.plot(x,y)        
-
-            
-        
-        row = appendRow(row=row, data=y, 
-                        names=['hist1', 'hist2', 'hist3', 'hist4', 'hist5', 'hist6', 'hist7', 'hist8', 'hist9', 'hist10', 'hist11', 'hist12', 'hist13', 'hist14', 'hist15', 'hist16'], ind=r)
-        
-        
-        # Get histogram around 0 ghost, mask: segmented_lungs
-        # Estimate bone density (mean/median vals in bone range)
-        data = 'resImage3D'
-        data = pData1[data]
-        m = np.mean(data[(data>=700) & (data<=3000)])
-        st = np.std(data[(data>=700) & (data<=3000)])
-        row = appendRow(row=row, data=[m, st], 
-                        names=['boneMean', 'boanSTD'], ind=r)
-        
-        # Estimate blood volume and blood to lung vol ratio
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        
-        data[(data<30)] = 0
-        data[(data>45)] = 0
-        data[(data>=30) & (data<=45)] = 1
-        bSum = np.sum(data[mask.astype(np.bool)])
-        bVR = bSum/lv
-      
-        row = appendRow(row=row, data=[bSum, bVR], 
-                        names=['bloodVol', 'bloodVR'], ind=r)
+            # stupid part
+            if testFlag:
+                # id in placeholder labels has .npz
+               nl = labelsCSV.loc[labelsCSV['id']==fn]
+            else:
+                nl = labelsCSV.loc[labelsCSV['id']==fn[0:-4]]
                 
-        # Estimate air to volume ratio
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        
-        data[(data>-1000)] = 0
-        data[(data<-1999)] = 0
-        data[(data>=-1999) & (data<=-1000) & mask.astype(np.bool)] = 1
-        aSum = np.sum(data[mask.astype(np.bool)])
-        aVR = aSum/lv
-      
-        row = appendRow(row=row, data=[aSum, aVR], 
-                        names=['airVol', 'airVR'],  ind=r)
-                
-        
-        # Estimate air to blood ratio
-        abR = aSum/bSum
-        abVR = aVR/bVR
-        row = appendRow(row=row, data=[abR, abVR], 
-                        names=['airBlood_R', 'airVRBloodVR_R'], ind=r)
-        
-        
-        # Get ratios of these ranges to volume:
-        # http://www.auntminnie.com/index.aspx?sec=ser&sub=def&pag=dis&ItemID=80701
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data1 = pData1[data]
-        data2 = pData1[data]        
-        mask = pData1[mask]
-        # Less malignant range
-        data1[data1<-196]=0
-        data1[data1>42]=0
-        lessMalSum = np.sum(data1[mask.astype(np.bool)])
-        lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
-        lessMalMed = np.median(data1[mask.astype(np.bool)])
-        lessMalVR = lessMalSum/lv
-        data2[data1<-94]=0
-        data2[data1>176]=0
-        moreMalSum = np.sum(data2[mask.astype(np.bool)])
-        moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
-        moreMalMed = np.median(data2[mask.astype(np.bool)])
-        moreMalVR = moreMalSum/lv
-        row = appendRow(row=row, 
-                        data=[lessMalMed, lessMalBinSum, lessMalMed, lessMalVR, 
-                                       moreMalSum, moreMalBinSum, moreMalMed, moreMalVR], 
-                        names=['lessMalMedSLF', 'lessMalBinSumSLF', 'lessMalMedSLF', 'lessMalVRSLF', 
-                               'moreMalSumSLF', 'moreMalBinSumSLF', 'moreMalMedSLF', 'moreMalVRSLF'], 
-                        ind=r)
-        
-        # Also do some nodule finding on these two masks
-        mask = 'segmented_lungs_fill'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(data1, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['lm_SLF_cN', 'lm_SLF_cPT', 'lm_SLF_cM', 
-                        'lm_SLF_cMed', 'lm_SLF_cStd'], ind=r)
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(data2, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['mm_SLF_cN', 'mm_SLF_cPT', 'mm_SLF_cM', 
-                        'mm_SLF_cMed', 'mm_SLF_cStd'], ind=r)
-        
-        # Use segmented lungs instead
-        data = 'resImage3D'
-        mask = 'segmented_lungs'
-        data1 = pData1[data]
-        data2 = pData1[data]        
-        mask = pData1[mask]
-        # Less malignant range
-        data1[data1<-196]=0
-        data1[data1>42]=0
-        lessMalSum = np.sum(data1[mask.astype(np.bool)])
-        lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
-        lessMalMed = np.median(data1[mask.astype(np.bool)])
-        lessMalVR = lessMalSum/lv
-        data2[data1<-94]=0
-        data2[data1>176]=0
-        moreMalSum = np.sum(data2[mask.astype(np.bool)])
-        moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
-        moreMalMed = np.median(data2[mask.astype(np.bool)])
-        moreMalVR = moreMalSum/lv
-        row = appendRow(row=row, 
-                        data=[lessMalMed, lessMalMed, lessMalVR, 
-                                       moreMalSum, moreMalMed, moreMalVR], 
-                        names=['lessMalMedSL', 'lessMalBinSumSL', 'lessMalMedSL', 'lessMalVRSL', 
-                               'moreMalSumSL', 'moreMalBinSumSL', 'moreMalMedSL', 'moreMalVRSL'], 
-                        ind=r)
-        
-        # Also do some nodule finding on these two masks
-        mask = 'segmented_lungs'
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(data1, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['lm_SL_cN', 'lm_SL_cPT', 'lm_SL_cM', 
-                        'lm_SL_cMed', 'lm_SL_cStd'], ind=r)
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures(data2, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                         names=['mm_SL_cN', 'mm_SL_cPT', 'mm_SL_cM', 
-                        'mm_SL_cMed', 'mm_SL_cStd'], ind=r)
-        
-        
-        # Get difference between mean and median V1, mask: filled
-        # Get difference between mean and median ghost, mask: filled
-        
-        # From UNET
-        data = UNM
-        row = appendRow(row=row, data=[np.sum(UNM), np.max(UNM)], 
-                        names=['UNETNodSum', 'UNETNodMax'], ind=r)
-        
-        
-        
-        # Assuming nodPreds are n x 1 x 256 x 256
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        # Nod mask
-        nodMask = UNM.squeeze() # Remove extra dimension
-        # Add features 2 uses extract features 2 (taken from trainV3) which uses
-        # nodMask to find nods, then data and lung mask to extract
-        cN, cPropTop, cMean, cMedian, cStd = \
-        addFeatures2(nodMask, pData1[data], mask=pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
-                        names=['UNET_Diff_cN', 'UNET_Diff_cPT', 'UNET_Diff_cM', 
-                        'UNET_Diff_cMed', 'UNET_Diff_cStd'], ind=r)
-        # For later
-        # Extract candidates for 3D network
-        # Extract candidate similarity to other shapes
+            label = nl.iloc[0][1]
     
-        print('Col check: ' + str(len(row.columns)) + ' for ' + fn)
-        
-        # Append row to table
-        try:
+            pData1, pData6, UNM = features.loadAllPP(ppV1, ppV6, ppU, fn) 
             
-            table = pd.concat([table, row], axis=0)
-            print(row.columns)
-        except:
-            print('ERROR')
-            print(row.columns)
-            return row, table
-        
-    return table
-    
-    def getRows_V3(paths, files, labelsCSV, testFlag=False, plotOn=False):
-    
-    table = pd.DataFrame()
-    nF = len(files)
-    
-    for r in range(0,nF):
-    
-        print('Appending row: ' + str(r+1) + '/' + str(nF))
-        fn = files.iloc[r,0]
-        
-        # stupid part
-        if testFlag:
-            # id in placeholder labels has .npz
-            nl = labelsCSV.loc[labelsCSV['id']==fn]
-        else:
-            nl = labelsCSV.loc[labelsCSV['id']==fn[0:-4]]
+            # Prepare dataFrame
+            row = features.appendRow(data=[fn, label], 
+                            names=['name', 'cancer'])
             
-        label = nl.iloc[0][1]
-
-        pData1, pData6, UNM = loadAllPP(paths, fn) 
-        
-        # Prepare dataFrame
-        row = appendRow(data=[fn, label], 
-                        names=['name', 'cancer'])
-        
-        #pData1 contains
-        # resImage3D = pData1['resImage3D']
-        # segmented_lungs = pData1['segmented_lungs']
-        # segmented_lungs_fill = pData1['segmented_lungs_fill']
-        # diff = pData1['diff']
-        # diff2 = pData1['diff2']
-        
-        
-        # Get ghost
-        ghost = getGhost(pData1['resImage3D'])
-        
-        if plotOn:
-            plt.imshow(ghost[100,:,:], cmap=plt.cm.gray)
-            plt.show()
-            plt.imshow(pData1['resImage3D'][100,:,:], cmap=plt.cm.gray)
-            plt.show()
-            gDiff = pData1['resImage3D']-ghost
-            plt.imshow(gDiff[100,:,:], cmap=plt.cm.gray)
-            plt.show()
-
-        # Run get functions
-        
-        # Find candidates V1, mask: pData['segmented_lungs_fill']
-        # Prop top half
-        # mean, median, std, x,y,z locs
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['PD1_SLF_cN', 'PD1_SLF_cPT', 'PD1_SLF_cM', 
-                        'PD1_SLF_cMed', 'PD1_SLF_cStd', 'PD1_SLF_cMT'], ind=r)
-        
-        # Find candidates V1, mask: pData['diff']
-        data = 'resImage3D'
-        mask = 'diff'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['PD1_Diff_cN', 'PD1_Diff_cPT', 'PD1_Diff_cM', 
-                        'PD1_Diff_cMed', 'PD1_Diff_cStd', 'PD1_Diff_cMT'], ind=r)
-        
-        # Find candidates V1, mask: pData['diff2']
-        data = 'resImage3D'
-        mask = 'diff2'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['PD1_Diff2_cN', 'PD1_Diff2_cPT', 'PD1_Diff2_cM', 
-                        'PD1_Diff2_cMed', 'PD1_Diff2_cStd', 'PD1_Diff2_cMT'], ind=r)
-        
-        
-        # Find candidates ghost, mask: pData['segmented_lungs']
-        data = 'resImage3D'
-        mask = 'segmented_lungs'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(pData1[data], pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['PD1_SL_cN', 'PD1_SL_cPT', 'PD1_SL_cM', 
-                        'PD1_SL_cMed', 'PD1_SL_cStd', 'PD1_SL_cMT'], ind=r)
-        
-        # Find candidates ghost, mask: pData['diff']
-        data = ghost
-        mask = 'diff'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(ghost, pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['gh_Diff_cN', 'gh_Diff_cPT', 'gh_Diff_cM', 
-                        'gh_Diff_cMed', 'gh_Diff_cStd', 'gh_Diff_cMT'], ind=r)
-        
-        # Find candidates ghost, mask: pData['diff2']
-        data = ghost
-        mask = 'diff2'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(ghost, pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['gh_Diff2_cN', 'gh_Diff2_cPT', 'gh_Diff2_cM', 
-                        'gh_Diff2_cMed', 'gh_Diff2_cStd', 'gh_Diff2_cMT'], ind=r)
-        
-        # Get lung volume from segmented_lung_fill?
-        mask = 'segmented_lungs_fill'
-        data = pData1[mask]
-        lv = np.sum(data)
-        row = appendRow(row=row, data=[lv], 
-                        names=['SLF_LV'], ind=r)
-        # Get height/volume ratio
-        thresh = 400
-        data1D = np.sum(data,axis=(1,2))
-        
-        data1D[data1D<thresh]=0
-        data1D[data1D>=thresh]=1
-        vhr = lv/np.sum(data1D)
-        
-        row = appendRow(row=row, data=[vhr], 
-                        names=['VHR'], ind=r)        
-        
-        # Get histogram around 0 V1, mask: segmented_lungs
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        y,x = getHist(data[mask.astype(np.bool)], bins=50, xLims=[-400,400])
-        # plt.plot(x,y)        
-
-            
-        row = appendRow(row=row, data=y, 
-                        names=['hist1', 'hist2', 'hist3', 'hist4', 'hist5', 'hist6', 'hist7', 'hist8', 'hist9', 'hist10', 'hist11', 'hist12', 'hist13', 'hist14', 'hist15', 'hist16'], ind=r)
-        
-        
-        # Get histogram around 0 ghost, mask: segmented_lungs
-        # Estimate bone density (mean/median vals in bone range)
-        data = 'resImage3D'
-        data = pData1[data]
-        m = np.mean(data[(data>=700) & (data<=3000)])
-        st = np.std(data[(data>=700) & (data<=3000)])
-        row = appendRow(row=row, data=[m, st], 
-                        names=['boneMean', 'boanSTD'], ind=r)
-        
-        # Estimate blood volume and blood to lung vol ratio
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        
-        data[(data<30)] = 0
-        data[(data>45)] = 0
-        data[(data>=30) & (data<=45)] = 1
-        bSum = np.sum(data[mask.astype(np.bool)])
-        bVR = bSum/lv
-      
-        row = appendRow(row=row, data=[bSum, bVR], 
-                        names=['bloodVol', 'bloodVR'], ind=r)
-                
-        # Estimate air to volume ratio
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data = pData1[data]
-        mask = pData1[mask]
-        
-        data[(data>-1000)] = 0
-        data[(data<-1999)] = 0
-        data[(data>=-1999) & (data<=-1000) & mask.astype(np.bool)] = 1
-        aSum = np.sum(data[mask.astype(np.bool)])
-        aVR = aSum/lv
-      
-        row = appendRow(row=row, data=[aSum, aVR], 
-                        names=['airVol', 'airVR'],  ind=r)
-                
-        
-        # Estimate air to blood ratio
-        abR = aSum/bSum
-        abVR = aVR/bVR
-        row = appendRow(row=row, data=[abR, abVR], 
-                        names=['airBlood_R', 'airVRBloodVR_R'], ind=r)
-        
-        
-        # Get ratios of these ranges to volume:
-        # http://www.auntminnie.com/index.aspx?sec=ser&sub=def&pag=dis&ItemID=80701
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        data1 = pData1[data]
-        data2 = pData1[data]        
-        mask = pData1[mask]
-        # Less malignant range
-        data1[data1<-196]=0
-        data1[data1>42]=0
-        lessMalSum = np.sum(data1[mask.astype(np.bool)])
-        lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
-        lessMalMed = np.median(data1[mask.astype(np.bool)])
-        lessMalVR = lessMalSum/lv
-        data2[data1<-94]=0
-        data2[data1>176]=0
-        moreMalSum = np.sum(data2[mask.astype(np.bool)])
-        moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
-        moreMalMed = np.median(data2[mask.astype(np.bool)])
-        moreMalVR = moreMalSum/lv
-        row = appendRow(row=row, 
-                        data=[lessMalMed, lessMalBinSum, lessMalMed, lessMalVR, 
-                                       moreMalSum, moreMalBinSum, moreMalMed, moreMalVR], 
-                        names=['lessMalMedSLF', 'lessMalBinSumSLF', 'lessMalMedSLF', 'lessMalVRSLF', 
-                               'moreMalSumSLF', 'moreMalBinSumSLF', 'moreMalMedSLF', 'moreMalVRSLF'], 
-                        ind=r)
-        
-        # Also do some nodule finding on these two masks
-        mask = 'segmented_lungs_fill'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(data1, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['lm_SLF_cN', 'lm_SLF_cPT', 'lm_SLF_cM', 
-                        'lm_SLF_cMed', 'lm_SLF_cStd','lm_SLF_cMT'], ind=r)
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(data2, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['mm_SLF_cN', 'mm_SLF_cPT', 'mm_SLF_cM', 
-                        'mm_SLF_cMed', 'mm_SLF_cStd', 'mm_SLF_cMT'], ind=r)
-        
-        # Use segmented lungs instead
-        data = 'resImage3D'
-        mask = 'segmented_lungs'
-        data1 = pData1[data]
-        data2 = pData1[data]        
-        mask = pData1[mask]
-        # Less malignant range
-        data1[data1<-196]=0
-        data1[data1>42]=0
-        lessMalSum = np.sum(data1[mask.astype(np.bool)])
-        lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
-        lessMalMed = np.median(data1[mask.astype(np.bool)])
-        lessMalVR = lessMalSum/lv
-        data2[data1<-94]=0
-        data2[data1>176]=0
-        moreMalSum = np.sum(data2[mask.astype(np.bool)])
-        moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
-        moreMalMed = np.median(data2[mask.astype(np.bool)])
-        moreMalVR = moreMalSum/lv
-        row = appendRow(row=row, 
-                        data=[lessMalMed, lessMalMed, lessMalVR, 
-                                       moreMalSum, moreMalMed, moreMalVR], 
-                        names=['lessMalMedSL', 'lessMalBinSumSL', 'lessMalMedSL', 'lessMalVRSL', 
-                               'moreMalSumSL', 'moreMalBinSumSL', 'moreMalMedSL', 'moreMalVRSL'], 
-                        ind=r)
+            # pData1 contains
+            # resImage3D = pData1['resImage3D']
+            # segmented_lungs = pData1['segmented_lungs']
+            # segmented_lungs_fill = pData1['segmented_lungs_fill']
+            # diff = pData1['diff']
+            # diff2 = pData1['diff2']
+            # Extract all here to avoid reloading from disk
+                     
+            resImage3D = pData1['resImage3D']
+            segmented_lungs = pData1['segmented_lungs']
+            segmented_lungs_fill = pData1['segmented_lungs_fill']
+            diff = pData1['diff']
+            diff2 = pData1['diff2']
+            # pdb.set_trace()  
                         
-        
-        # Also do some nodule finding on these two masks
-        mask = 'segmented_lungs'
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(data1, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['lm_SL_cN', 'lm_SL_cPT', 'lm_SL_cM', 
-                        'lm_SL_cMed', 'lm_SL_cStd', 'lm_SL_cMT'], ind=r)
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures(data2, pData1[mask], plotOn=plotOn) # data1 has new mask already applied
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                         names=['mm_SL_cN', 'mm_SL_cPT', 'mm_SL_cM', 
-                        'mm_SL_cMed', 'mm_SL_cStd', 'mm_SL_cMT'], ind=r)
-        
-        
-        # https://www.kaggle.com/c/data-science-bowl-2017/discussion/30686
-        # Liver - size, prop of total vol, fat prop, mean, std as measure of inhomogeneity
-        # (range: 40 to 60),
-        # Fat (range: -150 to -50)
-        # Est BMI
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        liver = pData1[data]
-        fat = pData1[data]
-        mask = pData1[mask]
-        # Get rough liver. Limit to bottom two fiths.
-        top = int(data1.shape[0]/5*2)
-        liver[0:top,:,:]=0
-        liver[data1<40]=0
-        liver[data1>60]=0
-        liverSum = np.sum(liver[mask.astype(np.bool)])
-        liverMean = np.mean(liver[mask.astype(np.bool)])     
-        liverStd = np.std(liver[mask.astype(np.bool)])  
-        liverVol = np.sum(liver>0)
-        liverLungProp = liverVol/lv       
-        fat[data1<-150]=0
-        fat[data1>-50]=0
-        fatSum = np.sum(fat[mask.astype(np.bool)])
-        fatMean = np.mean(fat[mask.astype(np.bool)])  
-        fatStd = np.std(fat[mask.astype(np.bool)]) 
-        fatVol = np.sum(fat>0)       
-        fatLungProp = fatVol/lv    
-        BMI = fatVol/data1.shape[0] # "BMI"
-        row = appendRow(row=row, data=[liverSum, liverMean, liverStd, 
-                                       liverVol, liverLungProp, fatSum,
-                                       fatMean, fatStd, fatVol, fatLungProp, 
-                                       BMI], 
-                         names=['SLF_liver_sum', 'SLF_liver_mean',
-                                'SLF_liver_std', 'SLF_liver_vol',
-                                'SLF_liver_LP', 'SLF_fat_sum',
-                                'SLF_fat_mean', 'SLF_fat_std', 'SLF_fat_vol',
-                                'SLF_fat_LP', 'SLF_fat_BMI'], ind=r)
-        # And same without mask
-        data = 'resImage3D'
-        liver = pData1[data]
-        fat = pData1[data]
-        mask = np.ones(data1.shape)
-        # Get rough liver. Limit to bottom two fiths.
-        top = int(data1.shape[0]/5*2)
-        liver[0:top,:,:]=0
-        liver[data1<40]=0
-        liver[data1>60]=0
-        liverSum = np.sum(liver[mask.astype(np.bool)])
-        liverMean = np.mean(liver[mask.astype(np.bool)])     
-        liverStd = np.std(liver[mask.astype(np.bool)])  
-        liverVol = np.sum(liver>0)
-        liverLungProp = liverVol/lv       
-        fat[data1<-150]=0
-        fat[data1>-50]=0
-        fatSum = np.sum(fat[mask.astype(np.bool)])
-        fatMean = np.mean(fat[mask.astype(np.bool)])  
-        fatStd = np.std(fat[mask.astype(np.bool)]) 
-        fatVol = np.sum(fat>0)       
-        fatLungProp = fatVol/lv    
-        BMI = fatVol/data1.shape[0] # "BMI"
-        row = appendRow(row=row, data=[liverSum, liverMean, liverStd, 
-                                       liverVol, liverLungProp, fatSum,
-                                       fatMean, fatStd, fatVol, fatLungProp, 
-                                       BMI], 
-                         names=['nm_liver_sum', 'nm_liver_mean',
-                                'nm_liver_std', 'nm_liver_vol',
-                                'nm_liver_LP', 'nm_fat_sum',
-                                'nm_fat_mean', 'nm_fat_std', 'nm_fat_vol',
-                                'nm_fat_LP', 'nm_fat_BMI'], ind=r)
-        
-        # Get difference between mean and median V1, mask: filled
-        # Get difference between mean and median ghost, mask: filled
-        
-        # From UNET
-        data = UNM
-        row = appendRow(row=row, data=[np.sum(UNM), np.max(UNM)], 
-                        names=['UNETNodSum', 'UNETNodMax'], ind=r)
-        
-        
-        
-        # Assuming nodPreds are n x 1 x 256 x 256
-        data = 'resImage3D'
-        mask = 'segmented_lungs_fill'
-        # Nod mask
-        nodMask = UNM.squeeze() # Remove extra dimension
-        # Add features 2 uses extract features 2 (taken from trainV3) which uses
-        # nodMask to find nods, then data and lung mask to extract
-        cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
-        addFeatures2(nodMask, pData1[data], mask=pData1[mask], plotOn=plotOn)
-        row = appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
-                        names=['UNET_Diff_cN', 'UNET_Diff_cPT', 'UNET_Diff_cM', 
-                        'UNET_Diff_cMed', 'UNET_Diff_cStd', 'UNET_Diff_cMT'], ind=r)
-        # For later
-        # Extract candidates for 3D network
-        # Extract candidate similarity to other shapes
-    
-        print('Col check: ' + str(len(row.columns)) + ' for ' + fn)
-        
-        # Append row to table
-        try:
             
-            table = pd.concat([table, row], axis=0)
-            print(row.columns)
-        except:
-            print('ERROR')
-            print(row.columns)
-            return row, table
+            # Get ghost
+            ghost = features.getGhost(np.copy(resImage3D))
+            
+            if plotOn:
+                plt.imshow(ghost[100,:,:], cmap=plt.cm.gray)
+                plt.show()
+                plt.imshow(resImage3D[100,:,:], cmap=plt.cm.gray)
+                plt.show()
+                gDiff = resImage3D-ghost
+                plt.imshow(gDiff[100,:,:], cmap=plt.cm.gray)
+                plt.show()
+    
+            # Run get functions
+            
+            # Find candidates V1, mask: pData['segmented_lungs_fill']
+            # Prop top half
+            # mean, median, std, x,y,z locs
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['PD1_SLF_cN', 'PD1_SLF_cPT', 'PD1_SLF_cM', 
+                            'PD1_SLF_cMed', 'PD1_SLF_cStd'], ind=r)
+            
+            # Find candidates V1, mask: pData['diff']
+            data = np.copy(resImage3D)
+            mask = np.copy(diff)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['PD1_Diff_cN', 'PD1_Diff_cPT', 'PD1_Diff_cM', 
+                            'PD1_Diff_cMed', 'PD1_Diff_cStd'], ind=r)
+            
+            # Find candidates V1, mask: pData['diff2']
+            data = np.copy(resImage3D)
+            mask = np.copy(diff2)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['PD1_Diff2_cN', 'PD1_Diff2_cPT', 'PD1_Diff2_cM', 
+                            'PD1_Diff2_cMed', 'PD1_Diff2_cStd'], ind=r)
+            
+            
+            # Find candidates ghost, mask: pData['segmented_lungs']
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['PD1_SL_cN', 'PD1_SL_cPT', 'PD1_SL_cM', 
+                            'PD1_SL_cMed', 'PD1_SL_cStd'], ind=r)
+            
+            # Find candidates ghost, mask: pData['diff']
+            data = np.copy(ghost)
+            mask = np.copy(diff)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['gh_Diff_cN', 'gh_Diff_cPT', 'gh_Diff_cM', 
+                            'gh_Diff_cMed', 'gh_Diff_cStd'], ind=r)
+            
+            # Find candidates ghost, mask: pData['diff2']
+            data = np.copy(ghost)
+            mask = np.copy(diff2)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['gh_Diff2_cN', 'gh_Diff2_cPT', 'gh_Diff2_cM', 
+                            'gh_Diff2_cMed', 'gh_Diff2_cStd'], ind=r)
+            
+            # Get lung volume from segmented_lung_fill?
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(segmented_lungs_fill)
+            lv = np.sum(data)
+            row = features.appendRow(row=row, data=[lv], 
+                            names=['SLF_LV'], ind=r)
+            # Get height/volume ratio
+            thresh = 400
+            data1D = np.sum(data, axis=(1,2))
+            
+            data1D[data1D<thresh]=0
+            data1D[data1D>=thresh]=1
+            vhr = lv/np.sum(data1D)
+            
+            row = features.appendRow(row=row, data=[vhr], 
+                            names=['VHR'], ind=r)        
+            
+            # Get histogram around 0 V1, mask: segmented_lungs
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            y,x = features.getHist(data[mask.astype(np.bool)], 
+                                        bins=50, xLims=[-400,400])
+            # plt.plot(x,y)        
+    
+            row = features.appendRow(row=row, data=y, 
+                            names=['hist1', 'hist2', 'hist3', 'hist4', 
+                            'hist5', 'hist6', 'hist7', 'hist8', 'hist9', 
+                            'hist10', 'hist11', 'hist12', 'hist13', 
+                            'hist14', 'hist15', 'hist16'], ind=r)
+            
+            
+            # Get histogram around 0 ghost, mask: segmented_lungs
+            # Estimate bone density (mean/median vals in bone range)
+            # data = 'resImage3D'
+            data = np.copy(resImage3D)
+            m = np.mean(data[(data>=700) & (data<=3000)])
+            st = np.std(data[(data>=700) & (data<=3000)])
+            row = features.appendRow(row=row, data=[m, st], 
+                            names=['boneMean', 'boneSTD'], ind=r)
+            
+            # Estimate blood volume and blood to lung vol ratio
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            
+            data[(data<30)] = 0
+            data[(data>45)] = 0
+            data[(data>=30) & (data<=45)] = 1
+            bSum = np.sum(data[mask.astype(np.bool)])
+            bVR = bSum/lv
+          
+            row = features.appendRow(row=row, data=[bSum, bVR], 
+                            names=['bloodVol', 'bloodVR'], ind=r)
+                    
+            # Estimate air to volume ratio
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            
+            data[(data>-1000)] = 0
+            data[(data<-1999)] = 0
+            data[(data>=-2001) & (data<=-1000) & mask.astype(np.bool)] = 1
+            aSum = np.sum(data[mask.astype(np.bool)])
+            aVR = aSum/lv
+          
+            row = features.appendRow(row=row, data=[aSum, aVR], 
+                            names=['airVol', 'airVR'],  ind=r)
+                    
+            
+            # Estimate air to blood ratio
+            abR = aSum/bSum
+            abVR = aVR/bVR
+            row = features.appendRow(row=row, data=[abR, abVR], 
+                            names=['airBlood_R', 'airVRBloodVR_R'], ind=r)
+           
+            # tmp debugging
+            plt.imshow(pData1['resImage3D'][100,:,:])
+            plt.show()
+            plt.imshow(resImage3D[100,:,:])
+            plt.show()
+            # pdb.set_trace()
+            
+            # Get ratios of these ranges to volume:
+            # http://www.auntminnie.com/index.aspx?sec=ser&sub=def&pag=dis&ItemID=80701
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data1 = np.copy(resImage3D)
+            data2 = np.copy(resImage3D)        
+            mask = np.copy(segmented_lungs_fill)
+            # Less malignant range
+            data1[data1<-196]=0
+            data1[data1>42]=0
+            lessMalSum = np.sum(data1[mask.astype(np.bool)])
+            lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
+            lessMalMed = np.median(data1[mask.astype(np.bool)])
+            lessMalVR = lessMalSum/lv
+            data2[data1<-94]=0
+            data2[data1>176]=0
+            moreMalSum = np.sum(data2[mask.astype(np.bool)])
+            moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
+            moreMalMed = np.median(data2[mask.astype(np.bool)])
+            moreMalVR = moreMalSum/lv
+            row = features.appendRow(row=row, 
+                            data=[lessMalMed, lessMalBinSum, 
+                                  lessMalMed, lessMalVR, 
+                                  moreMalSum, moreMalBinSum, 
+                                  moreMalMed, moreMalVR], 
+                            names=['lessMalMedSLF', 'lessMalBinSumSLF', 
+                                   'lessMalMedSLF', 'lessMalVRSLF', 
+                                   'moreMalSumSLF', 'moreMalBinSumSLF', 
+                                   'moreMalMedSLF', 'moreMalVRSLF'], 
+                            ind=r)
+            
+            # Also do some nodule finding on these two masks
+            # mask = 'segmented_lungs_fill'
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data1, segmented_lungs_fill, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, 
+                            data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['lm_SLF_cN', 'lm_SLF_cPT', 'lm_SLF_cM', 
+                            'lm_SLF_cMed', 'lm_SLF_cStd'], ind=r)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data2, segmented_lungs_fill, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, 
+                            data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['mm_SLF_cN', 'mm_SLF_cPT', 'mm_SLF_cM', 
+                            'mm_SLF_cMed', 'mm_SLF_cStd'], ind=r)
+            
+            # Use segmented lungs instead
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs'
+            data1 = np.copy(resImage3D)
+            data2 = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs)
+            # Less malignant range
+            data1[data1<-196]=0
+            data1[data1>42]=0
+            lessMalSum = np.sum(data1[mask.astype(np.bool)])
+            lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
+            lessMalMed = np.median(data1[mask.astype(np.bool)])
+            lessMalVR = lessMalSum/lv
+            data2[data1<-94]=0
+            data2[data1>176]=0
+            moreMalSum = np.sum(data2[mask.astype(np.bool)])
+            moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
+            moreMalMed = np.median(data2[mask.astype(np.bool)])
+            moreMalVR = moreMalSum/lv
+            row = features.appendRow(row=row, 
+                            data=[lessMalMed, lessMalMed, lessMalVR, 
+                                  moreMalSum, moreMalMed, moreMalVR], 
+                            names=['lessMalMedSL', 'lessMalBinSumSL', 
+                                   'lessMalMedSL', 'lessMalVRSL', 
+                                   'moreMalSumSL', 'moreMalBinSumSL', 
+                                   'moreMalMedSL', 'moreMalVRSL'], 
+                            ind=r)
+            
+            # Also do some nodule finding on these two masks
+            mask = np.copy(segmented_lungs)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data1, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, 
+                            data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['lm_SL_cN', 'lm_SL_cPT', 'lm_SL_cM', 
+                            'lm_SL_cMed', 'lm_SL_cStd'], ind=r)
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures(data2, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, 
+                             data=[cN, cPropTop, cMean, cMedian, cStd], 
+                             names=['mm_SL_cN', 'mm_SL_cPT', 'mm_SL_cM', 
+                            'mm_SL_cMed', 'mm_SL_cStd'], ind=r)
+            
+            # pdb.set_trace()
+            # Get difference between mean and median V1, mask: filled
+            # Get difference between mean and median ghost, mask: filled
+            """ Disabled
+            # From UNET
+            data = UNM
+            row = features.appendRow(row=row, data=[np.sum(UNM), np.max(UNM)], 
+                            names=['UNETNodSum', 'UNETNodMax'], ind=r)
+            
+            
+            
+            # Assuming nodPreds are n x 1 x 256 x 256
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            # Nod mask
+            nodMask = UNM.squeeze() # Remove extra dimension
+            # Add features 2 uses extract features 2 (taken from trainV3) which uses
+            # nodMask to find nods, then data and lung mask to extract
+            cN, cPropTop, cMean, cMedian, cStd = \
+            features.addFeatures2(nodMask, resImage3D, 
+                                  mask=segmented_lungs_fill, plotOn=plotOn)
+            row = features.appendRow(row=row, 
+                            data=[cN, cPropTop, cMean, cMedian, cStd], 
+                            names=['UNET_Diff_cN', 'UNET_Diff_cPT', 
+                            'UNET_Diff_cM', 
+                            'UNET_Diff_cMed', 'UNET_Diff_cStd'], ind=r)
+            # For later
+            # Extract candidates for 3D network
+            # Extract candidate similarity to other shapes
+            """
         
-    return table
+            print('Col check: ' + str(len(row.columns)) + ' for ' + fn)
+            
+            # Append row to table
+            try:
+                
+                table = pd.concat([table, row], axis=0)
+                print(row.columns)
+            except:
+                print('ERROR')
+                print(row.columns)
+                return row, table
+            
+        return table
+    
+    @staticmethod    
+    def getRows_V3(ppV1, ppV6, ppU, files, labelsCSV, testFlag=False, plotOn=False):
+    
+        table = pd.DataFrame()
+        nF = len(files)
+        
+        for r in range(0,nF):
+        
+            print('Appending row: ' + str(r+1) + '/' + str(nF))
+            fn = files.iloc[r,0]
+            
+            # stupid part
+            if testFlag:
+                # id in placeholder labels has .npz
+                nl = labelsCSV.loc[labelsCSV['id']==fn]
+            else:
+                nl = labelsCSV.loc[labelsCSV['id']==fn[0:-4]]
+                
+            label = nl.iloc[0][1]
+    
+            pData1, pData6, UNM = features.loadAllPP(ppV1, ppV6, ppU, fn) 
+            
+            # Prepare dataFrame
+            row = features.appendRow(data=[fn, label], 
+                            names=['name', 'cancer'])
+            
+            # pData1 contains
+            # resImage3D = pData1['resImage3D']
+            # segmented_lungs = pData1['segmented_lungs']
+            # segmented_lungs_fill = pData1['segmented_lungs_fill']
+            # diff = pData1['diff']
+            # diff2 = pData1['diff2']
+            # Extract all here to avoid reloading from disk
+            resImage3D = np.copy(pData1['resImage3D'])
+            segmented_lungs = np.copy(pData1['segmented_lungs'])
+            segmented_lungs_fill = np.copy(pData1['segmented_lungs_fill'])
+            diff = np.copy(pData1['diff'])
+            diff2 = np.copy(pData1['diff2'])
+            
+            
+            
+            # Get ghost
+            ghost = features.getGhost(np.copy(pData1['resImage3D']))
+            
+            if plotOn:
+                plt.imshow(ghost[100,:,:], cmap=plt.cm.gray)
+                plt.show()
+                plt.imshow(pData1['resImage3D'][100,:,:], cmap=plt.cm.gray)
+                plt.show()
+                gDiff = pData1['resImage3D']-ghost
+                plt.imshow(gDiff[100,:,:], cmap=plt.cm.gray)
+                plt.show()
+    
+            # Run get functions
+            
+            # Find candidates V1, mask: pData['segmented_lungs_fill']
+            # Prop top half
+            # mean, median, std, x,y,z locs
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['PD1_SLF_cN', 'PD1_SLF_cPT', 'PD1_SLF_cM', 
+                            'PD1_SLF_cMed', 'PD1_SLF_cStd', 'PD1_SLF_cMT'], ind=r)
+            
+            # Find candidates V1, mask: pData['diff']
+            data = np.copy(resImage3D)
+            mask = np.copy(diff)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['PD1_Diff_cN', 'PD1_Diff_cPT', 'PD1_Diff_cM', 
+                            'PD1_Diff_cMed', 'PD1_Diff_cStd', 'PD1_Diff_cMT'], ind=r)
+            
+            # Find candidates V1, mask: pData['diff2']
+            data = np.copy(resImage3D)
+            mask = np.copy(diff2)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['PD1_Diff2_cN', 'PD1_Diff2_cPT', 'PD1_Diff2_cM', 
+                            'PD1_Diff2_cMed', 'PD1_Diff2_cStd', 'PD1_Diff2_cMT'], ind=r)
+            
+            
+            # Find candidates ghost, mask: pData['segmented_lungs']
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['PD1_SL_cN', 'PD1_SL_cPT', 'PD1_SL_cM', 
+                            'PD1_SL_cMed', 'PD1_SL_cStd', 'PD1_SL_cMT'], ind=r)
+            
+            # Find candidates ghost, mask: pData['diff']
+            data = np.copy(ghost)
+            mask = np.copy(diff)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['gh_Diff_cN', 'gh_Diff_cPT', 'gh_Diff_cM', 
+                            'gh_Diff_cMed', 'gh_Diff_cStd', 'gh_Diff_cMT'], ind=r)
+            
+            # Find candidates ghost, mask: pData['diff2']
+            data = np.copy(ghost)
+            mask = np.copy(diff2)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data, mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, 
+                                                    cMedian, cStd, cMeanTop], 
+                            names=['gh_Diff2_cN', 'gh_Diff2_cPT', 
+                            'gh_Diff2_cM', 
+                            'gh_Diff2_cMed', 'gh_Diff2_cStd', 
+                            'gh_Diff2_cMT'], ind=r)
+            
+            # Get lung volume from segmented_lung_fill?
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(segmented_lungs_fill)
+            lv = np.sum(data)
+            row = features.appendRow(row=row, data=[lv], 
+                            names=['SLF_LV'], ind=r)
+            # Get height/volume ratio
+            thresh = 400
+            data1D = np.sum(data,axis=(1,2))
+            
+            data1D[data1D<thresh]=0
+            data1D[data1D>=thresh]=1
+            vhr = lv/np.sum(data1D)
+            
+            row = features.appendRow(row=row, data=[vhr], 
+                            names=['VHR'], ind=r)        
+            
+            # Get histogram around 0 V1, mask: segmented_lungs 
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            # data = pData1[data]
+            # mask = pData1[mask]
+            y,x = features.getHist(data[mask.astype(np.bool)], bins=50, 
+                                   xLims=[-400,400])
+            # plt.plot(x,y)        
+    
+                
+            row = features.appendRow(row=row, data=y, 
+                            names=['hist1', 'hist2', 'hist3', 'hist4', 
+                            'hist5', 'hist6', 'hist7', 'hist8', 
+                            'hist9', 'hist10', 'hist11', 'hist12', 'hist13', 
+                            'hist14', 'hist15', 'hist16'], ind=r)
+            
+            
+            # Get histogram around 0 ghost, mask: segmented_lungs
+            # Estimate bone density (mean/median vals in bone range)
+            # data = 'resImage3D'
+            data = np.copy(resImage3D)
+            m = np.mean(data[(data>=700) & (data<=3000)])
+            st = np.std(data[(data>=700) & (data<=3000)])
+            row = features.appendRow(row=row, data=[m, st], 
+                            names=['boneMean', 'boneSTD'], ind=r)
+            
+            # Estimate blood volume and blood to lung vol ratio
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            
+            data[(data<30)] = 0
+            data[(data>45)] = 0
+            data[(data>=30) & (data<=45)] = 1
+            bSum = np.sum(data[mask.astype(np.bool)])
+            bVR = bSum/lv
+          
+            row = features.appendRow(row=row, data=[bSum, bVR], 
+                            names=['bloodVol', 'bloodVR'], ind=r)
+                    
+            # Estimate air to volume ratio
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            
+            data[(data>-1000)] = 0
+            data[(data<-1999)] = 0
+            data[(data>=-1999) & (data<=-1000) & mask.astype(np.bool)] = 1
+            aSum = np.sum(data[mask.astype(np.bool)])
+            aVR = aSum/lv
+          
+            row = features.appendRow(row=row, data=[aSum, aVR], 
+                            names=['airVol', 'airVR'],  ind=r)
+                    
+            
+            # Estimate air to blood ratio
+            abR = aSum/bSum
+            abVR = aVR/bVR
+            row = features.appendRow(row=row, data=[abR, abVR], 
+                            names=['airBlood_R', 'airVRBloodVR_R'], ind=r)
+            
+            
+            # Get ratios of these ranges to volume:
+            # http://www.auntminnie.com/index.aspx?sec=ser&sub=def&pag=dis&ItemID=80701
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs_fill'
+            data1 =np.copy(resImage3D)
+            data2 = np.copy(resImage3D)     
+            mask = np.copy(segmented_lungs_fill)
+            # Less malignant range
+            data1[data1<-196]=0
+            data1[data1>42]=0
+            lessMalSum = np.sum(data1[mask.astype(np.bool)])
+            lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
+            lessMalMed = np.median(data1[mask.astype(np.bool)])
+            lessMalVR = lessMalSum/lv
+            data2[data1<-94]=0
+            data2[data1>176]=0
+            moreMalSum = np.sum(data2[mask.astype(np.bool)])
+            moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
+            moreMalMed = np.median(data2[mask.astype(np.bool)])
+            moreMalVR = moreMalSum/lv
+            row = features.appendRow(row=row, 
+                            data=[lessMalMed, lessMalBinSum, lessMalMed, lessMalVR, 
+                                           moreMalSum, moreMalBinSum, moreMalMed, moreMalVR], 
+                            names=['lessMalMedSLF', 'lessMalBinSumSLF', 'lessMalMedSLF', 'lessMalVRSLF', 
+                                   'moreMalSumSLF', 'moreMalBinSumSLF', 'moreMalMedSLF', 'moreMalVRSLF'], 
+                            ind=r)
+            
+            # Also do some nodule finding on these two masks
+            mask = np.copy(segmented_lungs_fill)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data1, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['lm_SLF_cN', 'lm_SLF_cPT', 'lm_SLF_cM', 
+                            'lm_SLF_cMed', 'lm_SLF_cStd','lm_SLF_cMT'], ind=r)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data2, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['mm_SLF_cN', 'mm_SLF_cPT', 'mm_SLF_cM', 
+                            'mm_SLF_cMed', 'mm_SLF_cStd', 'mm_SLF_cMT'], ind=r)
+            
+            # Use segmented lungs instead
+            # data = 'resImage3D'
+            # mask = 'segmented_lungs'
+            data1 = np.copy(resImage3D)
+            data2 = np.copy(resImage3D)       
+            mask = np.copy(segmented_lungs)
+            # Less malignant range
+            data1[data1<-196]=0
+            data1[data1>42]=0
+            lessMalSum = np.sum(data1[mask.astype(np.bool)])
+            lessMalBinSum = np.sum(data1[mask.astype(np.bool)]==1)
+            lessMalMed = np.median(data1[mask.astype(np.bool)])
+            lessMalVR = lessMalSum/lv
+            data2[data1<-94]=0
+            data2[data1>176]=0
+            moreMalSum = np.sum(data2[mask.astype(np.bool)])
+            moreMalBinSum = np.sum(data2[mask.astype(np.bool)]==1)
+            moreMalMed = np.median(data2[mask.astype(np.bool)])
+            moreMalVR = moreMalSum/lv
+            row = features.appendRow(row=row, 
+                            data=[lessMalMed, lessMalMed, lessMalVR, 
+                                           moreMalSum, moreMalMed, moreMalVR], 
+                            names=['lessMalMedSL', 'lessMalBinSumSL', 
+                                   'lessMalMedSL', 'lessMalVRSL', 
+                                   'moreMalSumSL', 'moreMalBinSumSL', 
+                                   'moreMalMedSL', 'moreMalVRSL'], 
+                            ind=r)
+                            
+            
+            # Also do some nodule finding on these two masks
+            mask = np.copy(segmented_lungs)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data1, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['lm_SL_cN', 'lm_SL_cPT', 'lm_SL_cM', 
+                            'lm_SL_cMed', 'lm_SL_cStd', 'lm_SL_cMT'], ind=r)
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures_V3(data2, mask, plotOn=plotOn) # data1 has new mask already applied
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                             names=['mm_SL_cN', 'mm_SL_cPT', 'mm_SL_cM', 
+                            'mm_SL_cMed', 'mm_SL_cStd', 'mm_SL_cMT'], ind=r)
+            
+            
+            # https://www.kaggle.com/c/data-science-bowl-2017/discussion/30686
+            # Liver - size, prop of total vol, fat prop, mean, std as measure of inhomogeneity
+            # (range: 40 to 60),
+            # Fat (range: -150 to -50)
+            # Est BMI
+            # data = resImage3D
+            mask = np.copy(segmented_lungs_fill)
+            liver = np.copy(resImage3D)
+            fat = np.copy(resImage3D)
+            
+            # Get rough liver. Limit to bottom two fiths.
+            top = int(data1.shape[0]/5*2)
+            liver[0:top,:,:]=0
+            liver[data1<40]=0
+            liver[data1>60]=0
+            liverSum = np.sum(liver[mask.astype(np.bool)])
+            liverMean = np.mean(liver[mask.astype(np.bool)])     
+            liverStd = np.std(liver[mask.astype(np.bool)])  
+            liverVol = np.sum(liver>0)
+            liverLungProp = liverVol/lv       
+            fat[data1<-150]=0
+            fat[data1>-50]=0
+            fatSum = np.sum(fat[mask.astype(np.bool)])
+            fatMean = np.mean(fat[mask.astype(np.bool)])  
+            fatStd = np.std(fat[mask.astype(np.bool)]) 
+            fatVol = np.sum(fat>0)       
+            fatLungProp = fatVol/lv    
+            BMI = fatVol/data1.shape[0] # "BMI"
+            row = features.appendRow(row=row, data=[liverSum, liverMean, liverStd, 
+                                           liverVol, liverLungProp, fatSum,
+                                           fatMean, fatStd, fatVol, fatLungProp, 
+                                           BMI], 
+                             names=['SLF_liver_sum', 'SLF_liver_mean',
+                                    'SLF_liver_std', 'SLF_liver_vol',
+                                    'SLF_liver_LP', 'SLF_fat_sum',
+                                    'SLF_fat_mean', 'SLF_fat_std', 'SLF_fat_vol',
+                                    'SLF_fat_LP', 'SLF_fat_BMI'], ind=r)
+            # And same without mask
+            # data = 'resImage3D'
+            liver = np.copy(resImage3D)
+            fat = np.copy(resImage3D)
+            mask = np.ones(data1.shape)
+            # Get rough liver. Limit to bottom two fiths.
+            top = int(data1.shape[0]/5*2)
+            liver[0:top,:,:]=0
+            liver[data1<40]=0
+            liver[data1>60]=0
+            liverSum = np.sum(liver[mask.astype(np.bool)])
+            liverMean = np.mean(liver[mask.astype(np.bool)])     
+            liverStd = np.std(liver[mask.astype(np.bool)])  
+            liverVol = np.sum(liver>0)
+            liverLungProp = liverVol/lv       
+            fat[data1<-150]=0
+            fat[data1>-50]=0
+            fatSum = np.sum(fat[mask.astype(np.bool)])
+            fatMean = np.mean(fat[mask.astype(np.bool)])  
+            fatStd = np.std(fat[mask.astype(np.bool)]) 
+            fatVol = np.sum(fat>0)       
+            fatLungProp = fatVol/lv    
+            BMI = fatVol/data1.shape[0] # "BMI"
+            row = features.appendRow(row=row, data=[liverSum, liverMean, liverStd, 
+                                           liverVol, liverLungProp, fatSum,
+                                           fatMean, fatStd, fatVol, fatLungProp, 
+                                           BMI], 
+                             names=['nm_liver_sum', 'nm_liver_mean',
+                                    'nm_liver_std', 'nm_liver_vol',
+                                    'nm_liver_LP', 'nm_fat_sum',
+                                    'nm_fat_mean', 'nm_fat_std', 'nm_fat_vol',
+                                    'nm_fat_LP', 'nm_fat_BMI'], ind=r)
+            
+            # Get difference between mean and median V1, mask: filled
+            # Get difference between mean and median ghost, mask: filled
+            
+            # From UNET
+            data = np.copy(UNM)
+            row = features.appendRow(row=row, data=[np.sum(UNM), np.max(UNM)], 
+                            names=['UNETNodSum', 'UNETNodMax'], ind=r)
+            
+            
+            
+            # Assuming nodPreds are n x 1 x 256 x 256
+            data = np.copy(resImage3D)
+            mask = np.copy(segmented_lungs_fill)
+            # Nod mask
+            nodMask = UNM.squeeze() # Remove extra dimension
+            # Add features 2 uses extract features 2 (taken from trainV3) which uses
+            # nodMask to find nods, then data and lung mask to extract
+            cN, cPropTop, cMean, cMedian, cStd, cMeanTop = \
+            features.addFeatures2_V3(nodMask, data, mask=mask, plotOn=plotOn)
+            row = features.appendRow(row=row, data=[cN, cPropTop, cMean, cMedian, cStd, cMeanTop], 
+                            names=['UNET_Diff_cN', 'UNET_Diff_cPT', 'UNET_Diff_cM', 
+                            'UNET_Diff_cMed', 'UNET_Diff_cStd', 'UNET_Diff_cMT'], ind=r)
+            # For later
+            # Extract candidates for 3D network
+            # Extract candidate similarity to other shapes
+        
+            print('Col check: ' + str(len(row.columns)) + ' for ' + fn)
+            
+            # Append row to table
+            try:
+                
+                table = pd.concat([table, row], axis=0)
+                print(row.columns)
+            except:
+                print('ERROR')
+                print(row.columns)
+                return row, table
+            
+        return table
     

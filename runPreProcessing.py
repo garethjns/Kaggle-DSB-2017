@@ -18,7 +18,12 @@ from setPaths import paths
 from preprocessing import ppV6, ppV1
 from UNET import UNET
 from extractFeatures import features
+from XGBMod import XGBMod
+from ensemble import ens
+
 import os
+from glob import glob
+import pandas as pd
 
 # Auto reload functions when testing
 %load_ext autoreload
@@ -107,31 +112,32 @@ PP.process(patients[p])
 #%% PPV6: Run for all patients
 
 params['plotCTScan'] = False
-params['plot3D'] = True
+params['plot3D'] = False
 params['plotMid2D'] = False
-params['force'] = True
+params['force'] = False
 
 patients = os.listdir(paRaw)
 PP = ppV6(paRaw, paPP, params)
 PP.process(patients)
 
 
-#%% UNET: Set paths for predicting from PPV1
+#%% UNET: Set paths for predicting from PPV1 and ['UNETFromTutorial']
+# ['UNETFromTutorial'] - > ['UNETPredPPV1_s2'] (512,512) 
 
-allPaths = paths()
+allPaths = paths("S")
 
-paMod = []
+paMod = allPaths.paths['UNETFromTutorial']
 if processStage==1:
     # Stage 1
     paPP = allPaths.paths['PPed']
-    paPred = []
+    paPred = allPaths.paths['UNETPredPPV1']
 elif processStage==2:
     # Stage 2
     paPP = allPaths.paths['PPed_s2']
-    paPred = []
+    paPred = allPaths.paths['UNETPredPPV1_s2']
 
 
-#%% Get UNET predictions - PPV1
+#%% Get UNET predictions - PPV1 and ['UNETFromTutorial']
 
 files = glob(paPP+'*.npz')
 files = pd.DataFrame({'Files' : files})
@@ -142,23 +148,55 @@ params = {'plotHist' : False,
           'forcePP' : False,
           'forcePred' : False}
 
-U = UNET(paMod, paPP, paPred);
-U.predictPPV1(files, params, dimLim=[512,512])
+U = UNET(paMod, paPP, paPred, params=[], dimLim=[512,512]);
+U.predictPPV1(files)
+
+
+#%% UNET: Set paths for predicting from PPV1 and ['UNETTrained']
+# This seems to be a 256x256 model
+
+allPaths = paths("S")
+
+
+paMod = allPaths.paths["UNETTrained"] #?
+if processStage==1:
+    # Stage 1
+    paPP = allPaths.paths['PPed']
+    paPred = allPaths.paths['UNETPredPPV1_UT']
+elif processStage==2:
+    # Stage 2
+    paPP = allPaths.paths['PPed_s2']
+    paPred = allPaths.paths['UNETPredPPV1_UT_s2']
+
+
+#%% Get UNET predictions - PPV1 and ['UNETTrained']
+
+files = glob(paPP+'*.npz')
+files = pd.DataFrame({'Files' : files})
+
+params = {'plotHist' : False,
+          'plot3D' : False,
+          'plotMid2D' : False,
+          'forcePP' : False,
+          'forcePred' : False}
+
+U = UNET(paMod, paPP, paPred, params=[], dimLim=[256,256]);
+U.predictPPV1(files)
 
 
 #%% UNET: Set paths for predicting from the other set...
+# Also havd paMod = allPaths.paths["KerasUNETTest"], try that...
+allPaths = paths("S")
 
-allPaths = paths()
-
-paMod = []
+paMod = allPaths.paths["KerasUNETTest"]
 if processStage==1:
     # Stage 1
-    paPP = paths['PPedStage2V2']
-    paPred = []
+    paPP = allPaths.paths['PPed']
+    paPred = allPaths.paths['UNETPredPPV1_UT2_s2']
 elif processStage==2:
     # Stage 2
-    paPP = paths['PPedStage2V2_s2']
-    paPred = []
+    paPP = allPaths.paths['PPed_s2']
+    paPred = allPaths.paths['UNETPredPPV1_UT2_s2']
     
 
 #%% Get UNET predictions - 'PPedStage2V2']
@@ -170,17 +208,51 @@ params = {'plotHist' : False,
           'forcePred' : False}
 
           
+          
 files = glob(paPP+'*.npz')
 files = pd.DataFrame({'Files' : files})
 
-U = UNET(paMod, paPP, paPred);
-U.predictPPStage2V2(files, params, dimLim=[512,512])
+U = UNET(paMod, paPP, paPred, params=[], dimLim=[256,256]);
+U.predictPPV1(files)
 
 
 #%% Generate basic features for XGB models
+%load_ext autoreload
+%autoreload 2
+
+allPaths = paths()
+
+# Use combined stage12 paths
+ppPath1 = allPaths.paths['PPed_s12']
+ppPath6 = allPaths.paths['PPedV6_s12']
+nodesUNET = allPaths.paths['UNETPredPPV1_s12']
+labelPath = allPaths.paths['labels_s12']
+
+# Version 1
+eF = features(paPPV1=ppPath1, paPPV6=ppPath6,
+              labels=labelPath, nodesPath=None, name='S2V1') # Stage 1
+eF.runV1(doTrain=1, doTest=0)
+eF.runV1(doTrain=0, doTest=1)
+# Version 3
+eF2 = features(paPPV1=ppPath1, paPPV6=ppPath6,
+              labels=labelPath, nodesPath=nodesUNET, name='S2V3') # Stage 1
+eF2.runV3(doTrain=1, doTest=0)
+eF2.runV3(doTrain=0, doTest=1)
 
 
-#%% Predict from XBG model
+#%% Train and predict xgb models
+%load_ext autoreload
+%autoreload 2
+
+allPaths = paths()
+
+# Train both models
+mods = XGBMod(sFile, name='S2V1')
+mods = mods.runAll()
+
+# Train both models
+mods = XGBMod(sFile, name='S2V3')
+mods = mods.runAll()
 
 
 #%% Train TF model
@@ -190,3 +262,28 @@ U.predictPPStage2V2(files, params, dimLim=[512,512])
 
 
 #%% Ensemble selected models
+
+%load_ext autoreload
+%autoreload 2
+
+sFile = allPaths.paths["SampleSub_s2"]
+
+testPaths = {'GenFeaS2V1_XGBTree' : 'Predictions\\TEST_S2V1XGBTree.csv',
+             'GenFeaS2V1_XGBDart' : 'Predictions\\TEST_S2V1XGBDart.csv',
+             }
+             
+trainPaths = {'GenFeaS2V1_XGBTree' : 'Predictions\\TRAIN_S2V1XGBTree.csv',
+              'GenFeaS2V1_XGBDart' : 'Predictions\\TRAIN_S2V1XGBDart.csv',
+             }
+
+# Get the train labels from one of the feature tables
+trainTable = ens.load('trainTableS2V1.p')   
+trainLabels = trainTable.iloc[:,0:2]
+
+             
+# Create ensemble
+ensemble = ens(testPaths=testPaths, trainPaths=trainPaths, 
+               trainLabels=trainLabels,
+               subFile = sFile, name='XGBs_V1')
+ensemble.reducePreds('xgbtree')
+ensemble.writeSub()

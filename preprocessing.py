@@ -49,6 +49,7 @@ redundent.
 """
 
 class helpers:
+    @staticmethod
     def read_ct_scan(folder_name): # Used by PPV6
         # Read the slices from the dicom file
         slices = [dicom.read_file(folder_name + filename) for filename in os.listdir(folder_name)]
@@ -74,7 +75,8 @@ class helpers:
         slices = np.stack([s.pixel_array for s in slices])
         slices[slices == -2000] = 0
         return slices
-
+    
+    @staticmethod
     def read_ct_scan_HU(folder_name): # Used by PPV6
         # Read the slices from the dicom file
         slices = [dicom.read_file(folder_name + filename) for filename in os.listdir(folder_name)]
@@ -99,14 +101,15 @@ class helpers:
         image3D = ppV6.toHU(slices)
         
         return image3D
-        
+    
+    @staticmethod    
     def plot_ct_scan(scan): # Used by PPV6
         f, plots = plt.subplots(int(scan.shape[0] / 20) + 1, 4, figsize=(25, 25))
         for i in range(0, scan.shape[0], 5):
             plots[int(i / 20), int((i % 20) / 5)].axis('off')
             plots[int(i / 20), int((i % 20) / 5)].imshow(scan[i], cmap=plt.cm.bone) 
             
-
+    @staticmethod
     def get_segmented_lungs(im, lm=604, plot=False):
         
         '''
@@ -185,11 +188,13 @@ class helpers:
             plots[7].imshow(im, cmap=plt.cm.bone) 
             
         return im
-        
+    
+    @staticmethod   
     def segment_lung_from_ct_scan(ct_scan, lm=604): # Used by PPV6
         
         return np.asarray([ppV6.get_segmented_lungs(slice, lm=lm) for slice in ct_scan])    
-        
+    
+    @staticmethod    
     def plot_3d(image, threshold=-300): # Used by PPV6
         
         # Position the scan upright, 
@@ -213,7 +218,8 @@ class helpers:
         ax.set_zlim(0, p.shape[2])
     
         plt.show()    
-    
+   
+    @staticmethod
     def filterBVs(segmented_ct_scan): # Used by PPV6, PPV1
         selem = ball(2)
         binary = binary_closing(segmented_ct_scan, selem)
@@ -246,6 +252,7 @@ class helpers:
         return segmented_ct_scan
     
     # Take list of patients slices, convert to Hounsfield units
+    @staticmethod    
     def toHU2_PPV6(slices, limit=-2000): # Used by PPV6 (not used?)
         image3D = np.stack([s.pixel_array for s in slices])
         
@@ -266,6 +273,7 @@ class helpers:
         return(image3D)
         
     # Take list of patients slices, convert to Hounsfield units
+    @staticmethod
     def toHU(slices, limit=-2000): # Used by PPV1
         image3D = np.stack([s.pixel_array for s in slices])
         
@@ -285,7 +293,7 @@ class helpers:
         # return image3D as 3D np array
         return(image3D.astype(np.int16))
 
-
+    @staticmethod
     def load(path): # Used by PPV1
         # Load all images from specified folder
         # Find slices    
@@ -331,7 +339,8 @@ class helpers:
             # Return list of slices, containing image and meta data
             # Image is in .pixel_array
             return(slices, True)
-
+    
+    @staticmethod
     def resample(slices, image3D, newSpacing = [1,1,1]): # Used by PPV1
         # Work out current spacing
     
@@ -351,6 +360,7 @@ class helpers:
         
         return(image3D.astype(np.int16), newSpacing)            
                 
+    @staticmethod
     def plot3D(image, thresh = -300): # Used by PPV1
         # Position the scan upright, 
         # so the head of the patient would be at the top facing the camera
@@ -378,6 +388,7 @@ class helpers:
     
         plt.show()    
         
+    @staticmethod
     def largest_label_volume(im, bg=-1): # Used by PPV1
         vals, counts = np.unique(im, return_counts=True)
     
@@ -388,7 +399,8 @@ class helpers:
             return vals[np.argmax(counts)]
         else:
             return None
-            
+    
+    @staticmethod        
     def segment_lung_mask(image, fill_lung_structures=True): # Used by PPV1
     
         # not actually binary, but 1 and 2. 

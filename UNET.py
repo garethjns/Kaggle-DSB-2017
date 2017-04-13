@@ -5,7 +5,11 @@ Adding prediction code first, as needed for stage 2
 - Adding two predictions methods used for stage 1
 - UNETPPV1 (UNETPredictPPV1, now predictPPV1)
 - And UNETPPS2V2 (originally UNETPredictPPStage2V2, now predictPPStage2V2)
-Add train code later
+
+
+TO DO:
+    - Add LUNA16 preprocessing code
+    - Add UNET training code
 """
 
 #%% Imports
@@ -272,3 +276,4 @@ class UNET(uHelpers):
               'plotMid2D' : False,
               'forcePP' : False,
               'forcePred' : False}
+              

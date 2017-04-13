@@ -4,20 +4,24 @@ Classes to generate features for XGB models
 Features generates training and test tables
 Contains versions from generateFeatures and generateFeaturesV3 
 
+TODO:
+    - Add list of features etracted
+
 fHelpers contains the functions to do the work. If they were modified between 
 GF and GF3, both versions included. V3 version renamed _V3.
+
 """
 
 #%% Imports
 
-from preprocessing import helpers
+from preprocessing import pHelpers
 
 import pandas as pd
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle as pic
-import pdb
+import pdb # for debugging
 
 import scipy.io as scio
 
@@ -31,7 +35,7 @@ import scipy.ndimage as ndi
 
 
 #%% Helpers
-class fHelpers(helpers):
+class fHelpers(pHelpers):
     @staticmethod
     def availFiles(path): # Used by V1,V3
     # Find preprocess files

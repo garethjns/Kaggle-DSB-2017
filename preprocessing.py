@@ -1,23 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 
-PPV1
-References
-Preprocessing and plotting:
+PPV1 class - based on Guido Zuidhof's kernel
 https://www.kaggle.com/gzuidhof/data-science-bowl-2017/full-preprocessing-tutorial/discussion
 
-
-
-PPV6
-Preprocessing: Segmentation, candidate nodule detection using LUNA16 dataset and UNet model
-Based on https://www.kaggle.com/arnavkj95/data-science-bowl-2017/candidate-generation-and-luna16-preprocessing
-
-Currentely added:
-1) Segementation - batch processing and saving to PPedV6
-2) Column based candidate search prototypes - no batch here, do in minbatch get
-smData, n, xyzMin, xyzMax = extractNodes(data). 
-
-
+PPV6 class - based on ArnavJain's Kernel
+https://www.kaggle.com/arnavkj95/data-science-bowl-2017/candidate-generation-and-luna16-preprocessing
 
 
 """
@@ -48,7 +36,7 @@ Helpers are functions used by different PP methods. Some are modified, some are
 redundent.
 """
 
-class helpers:
+class pHelpers:
     @staticmethod
     def read_ct_scan(folder_name): # Used by PPV6
         # Read the slices from the dicom file
@@ -425,7 +413,7 @@ class helpers:
             for i, axial_slice in enumerate(binary_image):
                 axial_slice = axial_slice - 1
                 labeling = measure.label(axial_slice)
-                l_max = helpers.largest_label_volume(labeling, bg=0)
+                l_max = pHelpers.largest_label_volume(labeling, bg=0)
                 
                 if l_max is not None: #This slice contains some lung
                     binary_image[i][labeling != l_max] = 1
@@ -436,21 +424,64 @@ class helpers:
         
         # Remove other air pockets insided body
         labels = measure.label(binary_image, background=0)
-        l_max = helpers.largest_label_volume(labels, bg=0)
+        l_max = pHelpers.largest_label_volume(labels, bg=0)
         if l_max is not None: # There are air pockets
             binary_image[labels != l_max] = 0
      
         return binary_image
+        
+                
+    @staticmethod
+    def listData(path, labels):
+        """
+        Look in ppFolder for available data, return with labels
+        """
+        patients = os.listdir(path)
+        labels = pd.read_csv(labels)
+        
+        df = pd.DataFrame()
+        for p in patients:
+             df = df.append(labels[labels['id']==p[0:-4]])
+                
+        return(df)         
+        
+    def availFiles(path, labels):
+        # Find preprocess files
+        availFiles = pd.DataFrame(os.listdir(path))
+        nAvailFiles = availFiles.shape[0]
+        # Find those that are in the training set
+        labelsCSV = pd.read_csv(labels)
+        
+        a = np.empty([nAvailFiles,1])
+        for r in range(0,nAvailFiles):
+            
+            fn = availFiles.iloc[r,0][0:-4]
+        
+            a[r,0] = (fn in set(labelsCSV['id']))
+            
+            #print(fn in set(labelsCSV['id']))
+            
+      
+        nAvailTrain = int(sum(a))
+        nAvailTest = int(sum(a==0))
+      
+        availTrain = availFiles[a==1]
+        availTest = availFiles[a==0]
+        
+        return(availFiles, availTrain, availTest, 
+               nAvailFiles, nAvailTrain, nAvailTest)
+        
         
 #%% PPV1 class
 """
 Does PP based on Guido's script
 https://www.kaggle.com/gzuidhof/data-science-bowl-2017/full-preprocessing-tutorial/discussion
 Uses [PPed] path
+Saves processed 3D image, lung mask, filled lungs. Added differenes.
 
 """
     
-class ppV1(helpers):
+class ppV1(pHelpers):
     def __init__(self, paRaw, paPP, params):
         self.paRaw = paRaw
         self.paPP = paPP
@@ -550,7 +581,7 @@ class ppV1(helpers):
                                                                            
 #%% PPV6 Class
 """
-Does PP with segmentation - based on ArnavJan's script
+Does preprocessing with nodule segmentation - based on ArnavJain's script
 
 Init method
 Load method & Verify method
@@ -565,7 +596,7 @@ filterBVs
 toHU2
 """
 
-class ppV6(helpers):
+class ppV6(pHelpers):
     def __init__(self, paRaw, paPP, params):
         self.paRaw = paRaw
         self.paPP = paPP

@@ -186,6 +186,9 @@ class XGBMod(XGBHelpers):
     def train(self, data, mod='XGBTree'):
         """
         Run training.
+        TODO:
+            - Replace hardcode of valid prop?
+            
         """
         print('Training: ' + mod)
         
@@ -274,6 +277,7 @@ class XGBMod(XGBHelpers):
         """
         Set template params for XGBTree. All params set here for now.
         """
+        
         params = {'booster':'gbtree',
          'bst:max_depth': 2,
          'subsample': 1,
@@ -285,7 +289,7 @@ class XGBMod(XGBHelpers):
          'objective' : 'binary:logistic', 
          'nThread' : 3,
          'eval_metric' : ['auc', 'logloss'],
-         'nRounds' : 200}
+         'nRounds' : 1000}
          
         return params
          
@@ -294,6 +298,7 @@ class XGBMod(XGBHelpers):
         """
         Set template params for XGBDart. All params set here for now.
         """
+        
         params = {'booster':'dart',
          'max_depth': 20,
          'subsample': 1,
@@ -309,7 +314,7 @@ class XGBMod(XGBHelpers):
          'objective' : 'binary:logistic', 
          'nThread' : 3,
          'eval_metric' : ['auc', 'logloss'],
-         'nRounds' : 300}
+         'nRounds' : 1000}
 
         return params
         

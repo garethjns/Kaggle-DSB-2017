@@ -1,61 +1,96 @@
 # -*- coding: utf-8 -*-
 """
-TFMod class (from trainV3 and predictV3)
+Train a basic 3D convolutional neural network on 3D area isolated around node
+locations.
+Works with TensorBoard
+Structure eg.:
+3D Conv -> tanh -> 3D Conv -> dropout -> FC layer 
 
-Handles training and predicting from node model in TF
+Uses either node locations predicted from UNET or "basic nodes". Uses the basic
+node finding code in fHelpers (extractFeatures.py), with a couple of 
+modifications. Modified funtions are overloaded in tfHelpers here.
 
-tfHelpers inherits fHelpers from generateFeatures which includes basic
-node extraction methods. Need to make sure these are the same versions, if not,
-overload with version from trainV3 script. 
+tfMod.buildNetwork() will build network for training and predicting, difference
+is size of placeholders. In Training train and valid data placeholders are ~300
+and ~200. For testing only 1 is created with shape[0] = 50.
 
-getXY looks same
-getCols looks same
-getZ looks same
-getData is different version!
-extractNodes looks same
-extractNodes2 looks same
+TODO:
+    - Most training and test code have been added, but won't work yet. 
+    Need slight modification as now inside functions instead of script
+    - Need to update parameter setting
+    - Function calls to appropriate objects
+    - Need to add lines to run to run.py
 """
 
-#%% Imports - incomplete
+#%% Imports
+# fHelpers already imports pHelpers
+from extractFeature import fHelpers
 
-from preprocessing import plot3D, plot_3d
-from generateFeatures import fHelpers
-
+import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-import tensorflow as tf
-import os
 import pandas as pd
-import random as rand
+
+# In Get GPUs function:
+# from tensorflow.python.client import device_lib
 
 
-#%% Helpers
-# A few functions that do the remaning PP steps to the data after loading
-# from disk
+#%% Training/predicting methods
 
 class tfHelpers(fHelpers):
-    @staticmethod
+    """ 
+    Based on Train/predict V3_TB
+    Adding functions in helpers below
+    Adding test code as functions here - not creating an object
+    """
     def normalize(image, MIN_BOUND = -1000.0, MAX_BOUND = 400.0):
         image = (image - MIN_BOUND) / (MAX_BOUND - MIN_BOUND)
         image[image>1] = 1.
         image[image<0] = 0.
         return image.astype(np.float16)
         
-    @staticmethod
+
     def zero_center(image, PIXEL_MEAN = 0.25):
         image = image - PIXEL_MEAN
         return image.astype(np.float16)
-
+        
+    def oneHot(labels, cats=0):
+        labels = np.array(labels).astype(int)
+        
+        n = len(labels)
+        nCat = len(np.unique(labels))
+        # If cats is specified, check all are represeted in this set    
+        if nCat<cats:
+            nCat = cats
+        
+        hotLabels = np.zeros([n, nCat])   
+        
+        for r in range(0,n):
+            hotLabels[r,labels[r]-1] = 1
+        
+        return(hotLabels)
+        
+    def get_available_gpus():
+        from tensorflow.python.client import device_lib
+        local_device_protos = device_lib.list_local_devices()
+        return [x.name for x in local_device_protos if x.device_type == 'GPU']
+        
     
-    # Overload fHelpers.getData with this version from trainV3.
-    @staticmethod
+    def accuracy(predictions, labels):
+      return (100.0 * np.sum(np.argmax(predictions, 1) == np.argmax(labels, 1))
+              / predictions.shape[0])
+      
     def getData(data, xyzMin, xyzMax, buffs=[20,20,10], plotOn=False):
-    
-        # First make sure xyzMax is inside data.shape
-        # It might not be if coords come from mask larger than data
-        # As xyzMin is rescaled, then xyzMax calced as xyzMIn=buffs*2
-        # This grabs more space in real terms
-        # No check is made on size when this is done
+        """
+        This version of getData is from trainV3_TB (TF mod) training and
+        replaces the older (?) version in extractFeatures.fHelpers
+        
+        First make sure xyzMax is inside data.shape
+        It might not be if coords come from mask larger than data
+        As xyzMin is rescaled, then xyzMax calced as xyzMIn=buffs*2
+        This grabs more space in real terms
+        No check is made on size when this is done
+        """
         
         # Check max of each column
         bigIdx = xyzMax > data.shape[::-1]
@@ -94,260 +129,18 @@ class tfHelpers(fHelpers):
                  xyzMin[ni,0]:xyzMax[ni,0]]
                                 
                 if plotOn:
-                    plot_3d(out[ni,:,:,:], 0)
+                    tfHelpers.plot_3d(out[ni,:,:,:], 0)
                     plt.show()
             
             return out, n  
             
-    @staticmethod
-    def get_available_gpus():
-        from tensorflow.python.client import device_lib
-        local_device_protos = device_lib.list_local_devices()
-        return [x.name for x in local_device_protos if x.device_type == 'GPU']
-
-           
-#%% TF Mod
-""" 
-Class handelling the tensorFlow model
-
-.buildTrainingNetwork builds network for training
-.runTraining runs the taining
-.builtTestNetwork (to do) builds same network for predicting, but different placeholders
-.runTest() will be from predict script (not added yet)  
-"""
-
-class tfMod(tfHelpers):
-    def __init__(self, modPath, dataPath, nodePath, labelPath, cParams, 
-                 nodeMode=1, nMax=50,
-                 num_channels=1, num_labels=2, validProp=0.15, 
-                 processingStage=1, train=1, batch_size=50, num_hidden=560,
-                 patch_size=5, outChans=80):
-        
-        self.modPath = modPath
-        self.dataPath = dataPath
-        self.labelPath = labelPath
-        
-        # Set model params
-        self.batch_size = batch_size
-        self.nBatch = batch_size
-        self.patch_size = patch_size
-        self.num_hidden = num_hidden
-        self.outChans = outChans
-        self.num_steps = 60000 # training steps
-        
-        # Set data params
-        self.zSize = cParams['zBuff']*2
-        self.ySize = cParams['yBuff']*2 
-        self.xSize = cParams['xBuff']*2
-        self.num_channels = num_channels
-        self.train = train
-        self.nodeMode = nodeMode
-        self.nodePath = nodePath
-        
-        if train==1:
-            # Set up for training
-            if processingStage==1:
-                
-                allFiles, trainFiles, testFiles, _, nTrainFiles, _, labelsCSV = \
-                self.availFilesStage1(self.dataPath, self.labelPath)
-                
-                nLoad = nTrainFiles
-                loadIdx = np.random.choice(range(0,trainFiles.shape[0]), nLoad, 
-                                                 replace=False)
-                splitLoad = round(nLoad*(0-validProp))
-                trainIdx = loadIdx[0:splitLoad]
-                validIdx = loadIdx[splitLoad:nLoad]
-                
-                trainFilesLoad = trainFiles.iloc[trainIdx]                                   
-                trainLabelsLoad = labelsCSV.iloc[trainIdx]
-                cTrain, cTrainLabels = self.loadPPFilesV7(dataPath,
-                                      trainFilesLoad, cParams, trainLabelsLoad, 
-                                      nodeMode=2)
-                
-                validFilesLoad = trainFiles.iloc[validIdx]                                   
-                validLabelsLoad = labelsCSV.iloc[validIdx]
-                cValid, cValidLabels = self.loadPPFilesV7(dataPath,
-                                      validFilesLoad, cParams, validLabelsLoad, 
-                                      nodeMode=2)
-            
-            elif processingStage==2:
-                # TODO:
-                # Add: Retrain on all data
-                # Add: Get test files from new samplesub
-                pass
-            
-            self.allFiles = allFiles
-            self.trainFiles = trainFiles
-            self.nTrainFiles = nTrainFiles
-            self.nLoad = nLoad
-            self.trainFilesLoad = trainFilesLoad
-            self.trainLabelsLoad = trainLabelsLoad
-            self.cTrain = cTrain
-            self.cTrainLabels = cTrainLabels
-            self.validFilesLoad = validFilesLoad
-            self.validLabelsLoad = validLabelsLoad
-            self.cValid = cValid
-            self.cValidLabels = cValidLabels
-            self.nVaid = 200
-        else:
-            # Set up for testing
-            # Load test files, change model placeholders
-            self.nTest = 1216#testFiles.shape[0]
-            
-    @staticmethod
-    def accuracy(predictions, labels):
-      return (100.0 * np.sum(np.argmax(predictions, 1) == np.argmax(labels, 1))
-              / predictions.shape[0])    
-   
-    @staticmethod        
-    def availFilesStage1(path, labelPath):
-        # Find preprocess files
-        availFiles = pd.DataFrame(os.listdir(path))
-        nAvailFiles = availFiles.shape[0]
-        # Find those that are in the training set
-        labelsCSV = pd.read_csv(labelPath)
-        
-        a = np.empty([nAvailFiles,1])
-        for r in range(0,nAvailFiles):
-            
-            fn = availFiles.iloc[r,0][0:-4]
-        
-            a[r,0] = (fn in set(labelsCSV['id']))
-            
-            #print(fn in set(labelsCSV['id']))
-            
-      
-        nAvailTrain = int(sum(a))
-        nAvailTest = int(sum(a==0))
-      
-        availTrain = availFiles[a==1]
-        availTest = availFiles[a==0]
-        
-        return(availFiles, availTrain, availTest, 
-               nAvailFiles, nAvailTrain, nAvailTest)    
-    
-    # Load file, extract candidates, discard rest of file. Return candidates
-    def loadPPFilesV6(self, path, files, cParams, labels):
-        
-        if isinstance(files, str):
-            files = [files]
-        elif isinstance(files, pd.DataFrame):
-            files = set(files.iloc[:,0])
-        else:
-            files = set(files)
-            
-           
-        nFiles = len(files)
-        # loaded = []
-        
-        xBuff = cParams['xBuff'] # in each direction (size=*2)
-        yBuff = cParams['yBuff'] # in each direction
-        zBuff = cParams['zBuff'] # in each direction
-        nMax = cParams['nMax']
-        
-        loaded = np.empty(shape=[0,zBuff*2,yBuff*2,xBuff*2,1])
-        newLabels = pd.DataFrame(columns=['id', 'cancer'])  
-        
-        r = 0     
-        for fn in files:
-            print('Attempting to load: ' + path+fn)    
-    
-            data = np.load(path+fn)['arr_0']
-    
-            # c, cLabs = getNodesAndLabels([data], \
-            #                    cParams=cParams, labels=labels.iloc[r,:])
-    
-            
-            # Get candidaes
-            smData, n, xyzMin, xyzMax = self.extractNodes(
-                                data, buffs=[xBuff,yBuff,zBuff], 
-                                nMax = nMax, plotOn=False)
-            
-            
-            if n == 0:
-                # n returned is zero if data is empty
-                n = 1
-                
-            # Append candidates to output
-            loaded = np.append(loaded, np.expand_dims(smData, axis=4), axis=0)
-            newLabels = newLabels.append([labels.iloc[r,:]]*n)
-            
-            r +=1
-            print('Added: ' + fn + ' (' + str(r) + '/' + str(nFiles) + ')')
-        return loaded, newLabels
-            
-    # In this version load mask, then get data from mask or non-mask data 
-    # Give paths, so hardcode choices for now
-    def loadPPFilesV7(self, files):
-        
-        if isinstance(files, str):
-            files = [files]
-        elif isinstance(files, pd.DataFrame):
-            files = set(files.iloc[:,0])
-        else:
-            files = set(files)
-    
-        nFiles = len(files)
-        
-        xBuff = self.xBuff # in each direction (size=*2)
-        yBuff = self.yBuff # in each direction
-        zBuff = self.zBuff # in each direction
-        nMax = self.nMax
-        
-        loaded = np.empty(shape=[0,zBuff*2,yBuff*2,xBuff*2,1])
-        newLabels = pd.DataFrame(columns=['id', 'cancer'])  
-        
-        # Needs updating
-        path2 = self.dataPath # PPV1
-        path1 = self.nodePath # UNET or PPV6 nodes - should correspond with nodeMode
-        path3 = self.nodePath
-        
-        r = 0     
-        for fn in files:
-            print('Attempting to load data: ' + path1+fn )    
-            
-            data2 = np.load(path2+fn)['resImage3D']
-
-            if self.nodeMode == 1:
-                # Use simple nodes
-                print('Attempting to load nodes: ' + path1+fn)
-                data1 = np.load(path1+fn)['arr_0']
-                
-            elif self.nodeMode == 2:
-                print('Attempting to load nodes: ' + path3+fn)
-                # Use UNET nodes
-                data1 = np.load(path3+fn)['nodPreds'].astype(np.float32)
-                data1 = np.squeeze(data1)
-                print(np.sum(data1))
-    
-    
-            # c, cLabs = getNodesAndLabels([data], \
-            #                    cParams=cParams, labels=labels.iloc[r,:])
-    
-            # Get candidaes
-            smData, n, xyzMin, xyzMax = self.extractNodes2(
-                                data1=data1, data2=data2, buffs=[xBuff,yBuff,zBuff], 
-                                nMax = nMax, plotOn=False)
-            
-            if n == 0:
-                # n returned is zero if data is empty
-                n = 1
-                
-            # Append candidates to output
-            self.loaded = np.append(self.loaded, np.expand_dims(smData, axis=4), axis=0)
-            self.newLabels = newLabels.append([self.labels.iloc[r,:]]*n)
-            
-            r +=1
-            print('Added: ' + fn + ' (' + str(r) + '/' + str(nFiles) + ')')
-        
-        return loaded, newLabels
-        
-    @staticmethod    
     def getNodesAndLabels(data, cParams, labels):
-        # Gets nodes and labels in usable formats
-        # Expand out extra dim on loaded (to work with 3D conv)
+        """
+        Gets nodes and labels in usable formats
+        Expand out extra dim on loaded (to work with 3D conv)
         
-        # Data is a list now
+        Data is a list now
+        """
         
         # Set params (update to from input)    
         xBuff = cParams['xBuff'] # in each direction (size=*2)
@@ -367,7 +160,7 @@ class tfMod(tfHelpers):
             r+=1
          
             # Get candidaes
-            smData, n, xyzMin, xyzMax = tfMod.extractNodes(
+            smData, n, xyzMin, xyzMax = tfHelpers.extractNodes(
                                 d, buffs=[xBuff,yBuff,zBuff], 
                                 nMax = nMax, plotOn=False)
             # Append candidates to output
@@ -383,115 +176,382 @@ class tfMod(tfHelpers):
             
         return loaded, labels
         
-    def buildTrainingNetwork(self):
-        # Build network 
-        # Params set to self in init.
-        # 2 conv layers, 1 fully connected layer
-        # this is n rows expected by placeholder - files produce multiple rows
-        # nBatch = batch_size
+        
+    def reducePreds(preds, cTestLabels):
+
+        cTestLabels.cancer = preds[:,0]
+        
+        predsRed = cTestLabels.groupby(['id'], as_index=False).mean()
+        
+        predsRedID = np.array(predsRed.id)
+        
+        predsRed = np.array(predsRed.cancer)
+        
+        return predsRed, predsRedID
+ 
+#%% Import methods
+
+class tfMod(tfHelpers):
+    """
+    Imported PP functions required for loading /node extraction. 
+    Any changed methods overloaded here
+    
+    """
+    # In this version load mask, then get data from mask or non-mask data 
+    # Give paths, so hardcode choices for now
+    def loadPPFilesV7(paths, files, cParams, labels, nodeMode=1):
+        """
+        Load PPed files with either PPV6 or UNET based nodes
+        Replaces loadPPFilesV6, which is not included here.
+        """
+        if isinstance(files, str):
+            files = [files]
+        elif isinstance(files, pd.DataFrame):
+            files = set(files.iloc[:,0])
+        else:
+            files = set(files)
+    
+        nFiles = len(files)
+        
+        xBuff = cParams['xBuff'] # in each direction (size=*2)
+        yBuff = cParams['yBuff'] # in each direction
+        zBuff = cParams['zBuff'] # in each direction
+        nMax = cParams['nMax']
+        
+        loaded = np.empty(shape=[0,zBuff*2,yBuff*2,xBuff*2,1])
+        newLabels = pd.DataFrame(columns=['id', 'cancer'])  
+        
+        
+        path2 = paths['PPedSSD']
+    
+        path1 = paths['PPedV6SSD']
+        path3 = paths['UNETPredPPV1']
+        
+        r = 0     
+        for fn in files:
+            print('Attempting to load data: ' + path1+fn )    
+            
+            data2 = np.load(path2+fn)['resImage3D']
+    
+            
+            if nodeMode == 1:
+                # Use simple nodes
+                print('Attempting to load nodes: ' + path1+fn)
+                data1 = np.load(path1+fn)['arr_0']
+                
+            elif nodeMode == 2:
+                print('Attempting to load nodes: ' + path3+fn)
+                # Use UNET nodes
+                data1 = np.load(path3+fn)['nodPreds'].astype(np.float32)
+                data1 = np.squeeze(data1)
+                print(np.sum(data1))
+    
+    
+            # c, cLabs = getNodesAndLabels([data], \
+            #                    cParams=cParams, labels=labels.iloc[r,:])
+            
+            # Get candidaes
+            smData, n, xyzMin, xyzMax = extractNodes2(
+                                data1=data1, data2=data2, buffs=[xBuff,yBuff,zBuff], 
+                                nMax = nMax, plotOn=False)
+            
+            if n == 0:
+                # n returned is zero if data is empty
+                n = 1
+                
+            # Append candidates to output
+            loaded = np.append(loaded, np.expand_dims(smData, axis=4), axis=0)
+            newLabels = newLabels.append([labels.iloc[r,:]]*n)
+            
+            r +=1
+            print('Added: ' + fn + ' (' + str(r) + '/' + str(nFiles) + ')')
+        
+        return loaded, newLabels
+
+    def loadTraining():
+        """
+        Script to load training data and split in to validation sets.
+        TODO: 
+            Move params, make general with loadTest()
+        """
+        cParams = {'xBuff' : 20, # in each direction (size=*2)
+                   'yBuff' : 20, # in each direction
+                   'zBuff' : 10, # in each direction
+                   'nMax' : 20}
+           
+        # image_size = 100
+        num_channels = 1
+        num_labels = 2
+        validProp = 0.15
+        # Image size
+        xSize = cParams['xBuff']*2 # Input size
+        ySize = cParams['yBuff']*2 # Input size
+        zSize = cParams['zBuff']*2 # Input size, depth
+             
+        allFiles, trainFiles, testFiles, _, nTrainFiles, _ = \
+                availFiles(paths['PPedSSD'])
+        
+        nLoad = nTrainFiles
+        #nLoad = 100
+        loadIdx = np.random.choice(range(0,trainFiles.shape[0]), nLoad, replace=False)
+        splitLoad = round(nLoad*(0-validProp))
+        trainIdx = loadIdx[0:splitLoad]
+        validIdx = loadIdx[splitLoad:nLoad]
+        
+        trainFilesLoad = trainFiles.iloc[trainIdx]                                   
+        trainLabelsLoad = labelsCSV.iloc[trainIdx]
+        cTrain, cTrainLabels = loadPPFilesV7(paths,
+                              trainFilesLoad, cParams, trainLabelsLoad, nodeMode=1)
+        
+        validFilesLoad = trainFiles.iloc[validIdx]                                   
+        validLabelsLoad = labelsCSV.iloc[validIdx]
+        cValid, cValidLabels = loadPPFilesV7(paths,
+                              validFilesLoad, cParams, validLabelsLoad, nodeMode=1)
+                              
+
+    def loadTest():
+    # Load labels to workspace alongside filenames
+        labelsCSV = pd.read_csv(paths['labels_s12'])
+        submission = pd.read_csv(paths['SampleSub_s2'])
+        
+        #%% Load test data
+        
+        allFiles, trainFiles, testFiles, _, nTrainFiles, _ = \
+                availFiles(paths['PPed_s12'])
+        
+        # Should match training
+        cParams = {'xBuff' : 20, # in each direction (size=*2)
+                   'yBuff' : 20, # in each direction
+                   'zBuff' : 10, # in each direction
+                   'nMax' : 10}
+        
+        # image_size = 100
+        num_channels = 1
+        num_labels = 2
+        validProp = 0.15
+        # Image size
+        xSize = cParams['xBuff']*2 # Input size
+        ySize = cParams['yBuff']*2 # Input size
+        zSize = cParams['zBuff']*2 # Input size, depth
+                   
+                   
+        testFilesLoad = testFiles
+        #testLabels = np.zeros(shape=[testFiles.shape[0],1], dtype=np.int16)                                   
+        # testLabels are all zeros placeholder                                
+        cTest, cTestLabels = loadPPFilesV7(paths,
+                              testFilesLoad, cParams, submission, nodeMode=2)
+        
+        # Recount 
+        nTest = cTestLabels.shape[0]
+
+        
+    def variable_summaries(var, tag):
+      """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+      with tf.name_scope('summaries'+tag):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean', mean)
+        with tf.name_scope('stddev'):
+          stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('stddev', stddev)
+        tf.summary.scalar('max', tf.reduce_max(var))
+        tf.summary.scalar('min', tf.reduce_min(var))
+        tf.summary.histogram('histogram', var)
+    
+    def convLayer(inputTensor, chanIn=1, chanOut=80, patchSize=5, 
+                  strides=[1, 2, 2, 2, 1], layerName='conv', act='relu'):
+      # Apply name scope
+      with tf.name_scope(layerName):
+          # Variables.
+          # Weights
+          w = tf.Variable(tf.truncated_normal(
+              [patchSize, patchSize, patchSize, chanIn, chanOut], stddev=0.1), 
+                name='W')
+          tfMod.variable_summaries(w, layerName)
+          # Biases
+          b = tf.Variable(tf.zeros([chanOut]), name='B')
+          
+          # Op
+          conv = tf.nn.conv3d(inputTensor, w, strides, padding='SAME')
+          
+          if act == 'relu':
+              act = tf.nn.relu(conv + b)
+          elif act == 'tanh':
+              act = tf.nn.tanh(conv + b)
+          elif act == 'drop':
+              act = tf.nn.dropout(conv + b, 0.8)
+              
+          return act
+      
+              
+    def fcLayer(inputTensor, chanIn, chanOut, layerName='fc', act='drop'):
+      
+        with tf.name_scope(layerName):
+          w = tf.Variable(tf.truncated_normal([chanIn, chanOut], stddev=0.1), 
+                          name='W')
+          tfMod.variable_summaries(w, layerName)
+          b = tf.Variable(tf.constant(1.0, shape=[chanOut]), name='B')
+          
+          if act == 'drop':
+              act = tf.nn.dropout(tf.matmul(inputTensor, w) + b, 0.8)
+          elif act == 'relu':
+              act = tf.nn.relu(tf.matmul(inputTensor, w) + b)
+            
+          return act
+              
+    def buildNetwork(mode='train'):
+        """ 
+         Function to build the training or test network
+         2 conv layers, 1 fully connected layer
+         Only differences is placeholder names/sizes
+         Train: trainSubset (batch size), validSubset (valid size)
+         Test: testSubset (50)
+         
+         TODO: 
+             Generalise to work with test or train
+             (differences is placeholder size)
+             Move params.
+             Particularly outChans, which is varied between models
+         """
+        
+        if mode == 'train':
+            batch_size = 360# this is n rows expected by placeholder - files produce multiple rows
+            
+        elif mode == 'test':
+            batch_size = 50
+            
+        
+        
+        nBatch = batch_size
+        patch_size = 5
         # depth = 1
-        # nTest = 1216#testFiles.shape[0]
-        # nTrain = round(nBatch*(1-validProp))
+        num_hidden = 560
+        nTest = 1216#testFiles.shape[0]
+        nTrainBatch = round(nBatch*(1-validProp))
+        nValidBatch = round(nBatch*validProp)
+        nValidBatch = 160
         # nValid = cValid.shape[0]*0.5
-        # nValid = 200
-        self.graph = tf.Graph()
+        nValid = 200
+        graph = tf.Graph()
+        
         
         with graph.as_default():
-        
+
           # Input data.
-          trainSubset = tf.placeholder(tf.float32, shape=(self.nTrain, 
-                               self.zSize, self.ySize, self.xSize, self.num_channels), name='PHTrain')
-          trainSubsetLabels = tf.placeholder(tf.float32, shape=(self.nTrain,2), name='PHTrainLabs')
+          trainSubset = tf.placeholder(tf.float32, shape=(nTrainBatch, 
+                                        zSize, ySize, xSize, num_channels), 
+                                      name='PHTrain')
+                  
+          trainSubsetLabels = tf.placeholder(tf.float32, shape=(nTrainBatch,2), 
+                                             name='PHTrainLabs')
           
-          validSubset = tf.placeholder(tf.float32, shape=(self.nValid, 
-                               self.zSize, self.ySize, self.xSize, self.num_channels), name='PHValid')
-          validSubsetLabels = tf.placeholder(tf.float32, shape=(self.nValid,2), name='PHValidLabs')
+          validSubset = tf.placeholder(tf.float32, shape=(nValidBatch, 
+                               zSize, ySize, xSize, num_channels), 
+                              name='PHValid')
           
-          testDataset = tf.placeholder(tf.float32, shape = (self.nTest, 
-                                                 self.zSize, self.ySize, self.xSize, self.num_channels), name='PHTest')
+          validSubsetLabels = tf.placeholder(tf.float32, shape=(nValidBatch,2), 
+                                             name='PHValidLabs')
           
-          # testDataset = tf.Variable(initial_value = [1.0,1.0,1.0,1.0,1.0], validate_shape=False, name='PHTest')
+          testDataset = tf.placeholder(tf.float32, shape = (nTest, 
+                                    zSize, ySize, xSize, num_channels), 
+                                              name='PHTest')
+          
           LR = tf.Variable(1)
-          # testDataset = tf.constant(testData)
+          outChans = 80
           
-          outChans = self.outChans
-          
-          # Variables.
-          layer1_weights = tf.Variable(tf.truncated_normal(
-              [self.patch_size, self.patch_size, self.patch_size, self.num_channels, outChans], stddev=0.1))
-        
-          layer1_biases = tf.Variable(tf.zeros([outChans]))
-          
-          layer2_weights = tf.Variable(tf.truncated_normal(
-              [self.patch_size, self.patch_size, self.patch_size, outChans, outChans], stddev=0.1))
-        
-          layer2_biases = tf.Variable(tf.constant(1.0, shape=[outChans]))
-          
-          # layer2b_weights = tf.Variable(tf.truncated_normal(
-          #    [patch_size, patch_size, patch_size, outChans, outChans], stddev=0.1))
-        
-          # layer2b_biases = tf.Variable(tf.constant(1.0, shape=[outChans]))
-        
-          layer3_weights = tf.Variable(tf.truncated_normal(
-              [self.xSize // 4 * self.ySize // 4 * self.zSize //4 * outChans, 
-               self.num_hidden], stddev=0.1))
-        
-          layer3_biases = tf.Variable(tf.constant(1.0, shape=[self.num_hidden]))
-        
+          # Layer sizes not defined in functions
           layer4_weights = tf.Variable(tf.truncated_normal(
-              [self.num_hidden, self.num_labels], stddev=0.1))
+              [num_hidden, num_labels], stddev=0.1))
         
-          layer4_biases = tf.Variable(tf.constant(1.0, shape=[self.num_labels]))
+          layer4_biases = tf.Variable(tf.constant(1.0, shape=[num_labels]))
           
           # Model.
-          def model(smData):
-            # conv = tf.nn.conv3d(data.astype(np.float32), layer1_weights, [1, 2, 2, 2, 1], padding='SAME')
-            conv = tf.nn.conv3d(smData, layer1_weights, [1, 2, 2, 2, 1], padding='SAME')
-            # conv = tf.nn.max_pool3d(smData, [1,2,3,4,5], [1,2,3,4,5], padding='SAME')
-            hidden = tf.nn.tanh(conv + layer1_biases)
+          def model(smData, outChans=80, patchSize=5,
+                    fcNum = num_hidden, mName=''):
+             
+            act1 = convLayer(smData, chanIn=1, chanOut=outChans,
+                             strides=[1, 2, 2, 2, 1], 
+                            patchSize=patchSize, 
+                             layerName=mName+'conv1', act='tanh')
             
-            conv = tf.nn.conv3d(hidden, layer2_weights, [1, 2, 2, 2, 1], padding='SAME')
-            hidden = tf.nn.dropout(conv + layer2_biases, 0.8)
+            act2 = convLayer(act1, chanIn=outChans, chanOut=outChans, 
+                             strides=[1, 2, 2, 2, 1],
+                             patchSize=patchSize, 
+                             layerName=mName+'conv2', act='drop')
             
-            # conv = tf.nn.conv3d(hidden, layer2b_weights, [1, 2, 2, 2, 1], padding='SAME')
-            # hidden = tf.nn.tanh(conv + layer2b_biases)
-            
-            # shape = hidden.get_shape().as_list()
-            shape = hidden.get_shape().as_list()
-            # sh ape = [2, 5, 10, 10, 50]
-            reshape = tf.reshape(hidden, [shape[0], shape[1] * shape[2] * shape[3] * shape[4]])
+            # Reshape for FC
+            shape = act2.get_shape().as_list()
+            linSize = shape[1] * shape[2] * shape[3] * shape[4]
+            reshape = tf.reshape(act2, [shape[0], linSize])
         
-            hidden = tf.nn.dropout(tf.matmul(reshape, layer3_weights) + layer3_biases, 0.8)
+            act3 = fcLayer(reshape, chanIn=linSize, chanOut=fcNum, 
+                          layerName=mName+'fc1', act='drop')
         
-            return tf.matmul(hidden, layer4_weights) + layer4_biases
+            output = tf.matmul(act3, layer4_weights) + layer4_biases
+            
+            return output
           
           # Training computation.
-          self.logits = model(trainSubset) 
-          self.loss = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=trainSubsetLabels, 
-                                                    logits=self.logits))
+          with tf.name_scope("Models"):  
+              logits = model(trainSubset, outChans=outChans, patchSize=patch_size, 
+                         fcNum=num_hidden, mName='train') 
+              logitsV = model(validSubset, outChans=outChans, patchSize=patch_size, 
+                         fcNum=num_hidden, mName='valid')
           
-          self.logitsV = model(validSubset)
-          self.lossV = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(labels=validSubsetLabels, 
-                                                    logits=self.logitsV))
-          
+          with tf.name_scope("xent"):      
+              
+              loss = tf.reduce_mean(
+                tf.nn.softmax_cross_entropy_with_logits(labels=trainSubsetLabels, 
+                                                    logits=logits))
+              
+              lossV = tf.reduce_mean(
+                tf.nn.softmax_cross_entropy_with_logits(labels=validSubsetLabels, 
+                                                        logits=logitsV))
+              
           # Optimizer.
-          self. optimizer = tf.train.GradientDescentOptimizer(LR).minimize(self.loss)
+          with tf.name_scope("train"):
+              optimizer = tf.train.GradientDescentOptimizer(0.00001).minimize(loss)
           
           # Predictions for the training, validation, and test data.
-          self.train_prediction = tf.nn.softmax(self.logits)
-          self.valid_prediction = tf.nn.softmax(self.logitsV)
+          with tf.name_scope("Preds"):
+              train_prediction = tf.nn.softmax(logits)
+              valid_prediction = tf.nn.softmax(logitsV)
           
-          self.test_prediction = model(testDataset)
-          self.test_prediction = tf.nn.softmax(model(testDataset))
+              test_prediction = tf.nn.softmax(model(testDataset, outChans=outChans, 
+                                                    patchSize=patch_size, 
+                                                    fcNum=num_hidden))
           
+          with tf.name_scope("Accuracy"):
+              
+              cp = tf.equal(tf.argmax(logits,1), tf.argmax(trainSubsetLabels,1))
+              trAcc2 = tf.reduce_mean(tf.cast(cp, tf.float32))
+              
+              cp2 = tf.equal(tf.argmax(logitsV,1), tf.argmax(validSubsetLabels,1))
+              vAcc2 = tf.reduce_mean(tf.cast(cp2, tf.float32))
+              
           # Add ops to save and restore all the variables.
-          self.saver = tf.train.Saver()
+          saver = tf.train.Saver()
+          # Add summary writer
+         
+          tf.summary.scalar("va", vAcc2)
+          # Create a summary to monitor accuracy tensor
+          tf.summary.scalar("ta", trAcc2)
+          variable_summaries(trAcc2, 'TrainingAcc')
+          variable_summaries(vAcc2, 'ValidAcc')
+          variable_summaries(lossV, 'Trainingloss')
+          variable_summaries(loss, 'Validloss')
+          merged_summary = tf.summary.merge_all()
           
-    def runTraining(self):
-        # Run training - load all first
-        
+          
+    def runTraining():
+        """
+        Function to run the training network.
+        Output for Tensorboard.
+        Chekpoints/model to disk
+        TODO:
+            Move params/paths.
+            Tidy
+        """
+        num_steps = 240000
         initialRate = 0.000001
         initialRate = 0.001
         
@@ -499,66 +559,85 @@ class tfMod(tfHelpers):
         
         rand.seed(123123)
         
-        self.tsAcc = []
-        self.vsAcc = []
-        self.tLoss = []
-        self.vLoss = []
+        tsAcc = []
+        vsAcc = []
+        tLoss = []
+        vLoss = []
         it = -1
-        self.bestPerf = 0
+        bestPerf = 0
         sinceLast = 0
-        with tf.Session(graph=self.graph, 
-                config=tf.ConfigProto(log_device_placement=True)) as session:
+        with tf.Session(graph=graph, config=tf.ConfigProto(log_device_placement=True)) as session:
             
             tf.global_variables_initializer().run()
+            
+            logDir = "Summary/4"
+            #writer = tf.summary.FileWriter(logDir)
+            writer = tf.summary.FileWriter(logDir, graph=tf.get_default_graph())
+            #writer.add_graph(session.graph)
+            writer.flush()
+            
             print('Initialized')
-            #print(session.run(logits))
-            for step in range(self.num_steps):
+        
+            for step in range(num_steps):
                 it+=1       
                
-                learningRate = initialRate/np.exp(it/(self.num_steps/scalingFactor))        
+                learningRate = initialRate/np.exp(it/(num_steps/scalingFactor))        
                 
                 # Get data and labels
                 # allData -> trainLoad -> this batch
                 fIdxTrain = np.random.choice(range(0, cTrain.shape[0]), 
-                                                   round(self.nBatch*(1-self.validProp)), 
+                                                   nTrainBatch, 
                                           replace=False)
-                fIdxValid = np.random.choice(range(0, self.cValid.shape[0]), 
-                                                   round(self.nValid),
+                fIdxValid = np.random.choice(range(0, cValid.shape[0]), 
+                                                   nValidBatch,
                                           replace=False)
         
                 
                 # New: Data set already loaded
-                cTrainSubset = self.cTrain[fIdxTrain,:,:,:,:]
-                cTrainLabelsSubset = self.cTrainLabels['cancer'].iloc[fIdxTrain]
-                cValidSubset = self.cValid[fIdxValid,:,:,:,:]
-                cValidLabelsSubset = self.cValidLabels['cancer'].iloc[fIdxValid]
-
-              
-                feed_dict = {self.trainSubset : cTrainSubset, 
-                             self.trainSubsetLabels : self.oneHot(cTrainLabelsSubset,2),
-                             self. validSubset : cValidSubset, 
-                             self.validSubsetLabels : self.oneHot(cValidLabelsSubset,2),
-                             self.LR : learningRate}
+                cTrainSubset = cTrain[fIdxTrain,:,:,:,:]
+                cTrainLabelsSubset = cTrainLabels['cancer'].iloc[fIdxTrain]
+                cValidSubset = cValid[fIdxValid,:,:,:,:]
+                cValidLabelsSubset = cValidLabels['cancer'].iloc[fIdxValid]
+                
+                feed_dict = {trainSubset : cTrainSubset, 
+                             trainSubsetLabels : oneHot(cTrainLabelsSubset,2),
+                             validSubset : cValidSubset, 
+                             validSubsetLabels : oneHot(cValidLabelsSubset,2)}
+                             # LR : learningRate}
                              # testDataset : testData}
                              
-                _, l, predictions, lv, lp = session.run(
-                [self.optimizer, self.loss, self.train_prediction, self.lossV, self.valid_prediction], feed_dict=feed_dict)
+                _, l, predictions, lv, lp, ta, va, s = session.run(
+                          [optimizer, loss, train_prediction, 
+                           lossV, valid_prediction, trAcc2, vAcc2, merged_summary], 
+                          feed_dict=feed_dict)
                 
+                if not step % 20:
+                    print('Adding summary??')
+        
+                    # s = session.run(merged_summary)
+                    writer.add_run_metadata(tf.RunMetadata(), 'step%d' % step)
+                    writer.add_summary(s,step)
+                    #writer.add_summary(variable_summaries(ta),step)
+                    #writer.add_summary(variable_summaries(va),step)
+                    #writer.add_summary(variable_summaries(lv),step)
+                    #writer.add_summary(variable_summaries(lp),step)
+                    writer.flush()
+                    
                 # if (step % 50 == 0):
                 print('-------------------------------------------------------------')
                 print('LR: ' + str(learningRate))
                 print('Minibatch loss at step %d: %f' % (step, l))
                 
-                self.tsAcc.append(self.accuracy(predictions, self.oneHot(cTrainLabelsSubset)))
-                self.tLoss.append(l)
-                print("Training accuracy: " + str(self.tsAcc[it]))
+                tsAcc.append(accuracy(predictions, oneHot(cTrainLabelsSubset)))
+                tLoss.append(l)
+                print("Training accuracy: " + str(tsAcc[it]))
                 
                 # lv, lp = valid_prediction.eval(feed_dict=feed_dict)
                 
-                self.vsAcc.append(self.accuracy(lp,self.oneHot(cValidLabelsSubset)))
+                vsAcc.append(accuracy(lp,oneHot(cValidLabelsSubset)))
                 vLoss.append(lv)
                 
-                print("Validation accuracy: " + str(self.vsAcc[it]))
+                print("Validation accuracy: " + str(vsAcc[it]))
                 print("Validation loss: " + str(lv))
                 
                 
@@ -566,49 +645,124 @@ class tfMod(tfHelpers):
                 plt.figure(figsize=(12,4))
                 plt.subplot(1,2,1)
                 
-                plt.plot(self.tsAcc)
-                plt.plot(self.vsAcc, c='r')
+                plt.plot(tsAcc)
+                plt.plot(vsAcc, c='r')
                 # plt.title('A tale of 2 subplots')
                 plt.ylabel('Accuracy')
                 plt.xlabel('Step')
-                # plt.show()
-                
-                
+        
                 print('Training loss:')
                 plt.subplot(1,2,2)
-                l1 = plt.plot(self.tLoss, label='Train')
-                l2 = plt.plot(self.vLoss, c='r', label='Valid')
+                l1 = plt.plot(tLoss, label='Train')
+                l2 = plt.plot(vLoss, c='r', label='Valid')
                 plt.legend(labels=['Train', 'Valid'])
                 plt.ylabel('Loss')
                 plt.xlabel('Step')
                 
                 plt.show()
-
+        
+               
                 # Save the variables to disk.
                 # Rolling average of 5 steps
                 sinceLast +=1
                 if step > 5:
                     # Current perf is this step and previous 4
-                    currentPerf = np.mean(self.vsAcc[it-5:it])
+                    currentPerf = np.mean(vsAcc[it-5:it])
                     # If this is better than the bestPerf, update bestPerf and 
                     # checkpoint model
-                    if currentPerf >= self.bestPerf and sinceLast>10:
+                    if currentPerf >= bestPerf and sinceLast>2:
                         sinceLast = 0
-                        self.bestPerf=currentPerf
-                        chkFn = "S:\OneDrive\Matlab\DSB2017\Kaggle-DSB2017\\tmp\\model_st" + str(step) + '_' + \
+                        bestPerf=currentPerf
+                        chkFn = logDir + "model_st" + str(step) + '_' + \
                         str(round(float(currentPerf),3)) + ".ckpt"
         
-                        save_path = self.saver.save(session, chkFn)
+                        # save_path = saver.save(session, chkFn)
+                        save_path = saver.save(session, logDir+"/model.ckpt", step)
                         
                         print("Model saved in file: %s" % save_path)          
-               
+        
             # Save the variables to disk.
-            save_path = saver.save(session, paths['TF3D_40'])
-            print("Model saved in file: %s" % save_path)   
+            #save_path = saver.save(session, paths['TF3D_40'])
+            #print("Model saved in file: %s" % save_path)   
              
+            
         print('Training acc:')
         plt.plot(tsAcc)
         plt.show()
         print('Validation acc:')
         plt.plot(vsAcc)
         plt.show()
+        
+    def runPrediction(data):
+        """
+        Run prediction
+        Graph should be test graph from buildNetwwork
+        Runs on batches of 50
+        
+        TODO:
+            Generalise for test and train predictions
+        """
+        
+        # Create graph. Remember to set outChans.
+        # HERE
+        
+        #n = cTrain.shape[0]
+        n = cTest.shape[0]
+        
+        with tf.Session(graph=graph) as session:
+          # Restore variables from disk.
+          saver.restore(session, paths['TF3D_2'])
+          #saver.restore(session, paths['TF3D_TB4'])
+          #saver.restore(session, "Models/Summary4")
+          # saver.restore(session, paths['TF3D_1'])
+          # Remeber to change outChans
+          print("Model restored.")
+          
+          preds = np.empty(shape = (n,2))
+          sIdx = 0
+          eIdx = 0
+          for ni in range(0,int(n/50)+1):
+              
+              sIdx = eIdx
+              eIdx = sIdx+50
+              
+              # If overshooting, TF still exects 50 so get 50 even if some already done
+              if eIdx > n:
+                  eIdx = n
+                  sIdx = eIdx-50
+              
+              print(str(sIdx) + ' to ' + str(eIdx))
+              
+              #feed_dict = {testDataset : cTrain[sIdx:eIdx,:,:,:,:].astype(np.float32)}
+              feed_dict = {testDataset : cTest[sIdx:eIdx,:,:,:,:].astype(np.float32)}
+              preds[sIdx:eIdx] = test_prediction.eval(feed_dict=feed_dict)
+              
+              print("Prediction done.")    
+
+    def saveSub(preds, samSubPath, fn):
+        """
+        Load sample submission
+        Reduce predictions
+        Save submission
+        """
+        submission = pd.read_csv(samSubPath)
+        
+        redPreds, redPredsID = tfHelpers.reducePreds(preds, cTestLabels)
+        submission['cancer'] = redPreds
+        submission.to_csv(fn, index=False)  
+
+
+    def savePreds(preds, fn):
+        """ 
+        Reduce predictions
+        Save predictions alongside ID
+        """
+        
+        redPreds, redPredsID = tfHelpers.reducePreds(preds, cTrainLabels)
+        
+        trainSub = pd.DataFrame()
+        trainSub['id'] = redPredsID
+        trainSub['cancer'] = redPreds
+        trainSub.to_csv(fn, index=False) 
+        
+        
